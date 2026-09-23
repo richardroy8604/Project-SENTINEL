@@ -137,6 +137,53 @@ class TTSEngine:
         available = self._kokoro.get_voices()
         return "am_michael" if "am_michael" in available else available[0]
 
+    def _synthesize_fish(self, text: str) -> tuple[np.ndarray, int, float]:
+        """Synthesize via Fish Audio using custom cloned Ultron voice."""
+        import io
+        import requests
+        import soundfile as sf
+
+        start = time.perf_counter()
+        api_key = getattr(config, "FISH_AUDIO_API_KEY", "")
+        voice_id = getattr(config, "FISH_AUDIO_VOICE_ID", "06cfdb3653a4496983d6ad77f98cc184")
+        model = getattr(config, "FISH_AUDIO_MODEL", "s2.1-pro-free")
+
+        if not api_key:
+            print("[ULTRON TTS] Notice: FISH_AUDIO_API_KEY not set, falling back to Edge-TTS...")
+            return self._synthesize_edge(text)
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "model": model,
+        }
+        payload = {
+            "text": text,
+            "reference_id": voice_id,
+            "format": "mp3",
+        }
+
+        try:
+            resp = requests.post(
+                "https://api.fish.audio/v1/tts",
+                headers=headers,
+                json=payload,
+                timeout=8.0,
+            )
+
+            if resp.status_code == 200 and len(resp.content) > 500:
+                buf = io.BytesIO(resp.content)
+                audio, sample_rate = sf.read(buf, dtype="float32")
+                latency_ms = (time.perf_counter() - start) * 1000
+                return audio, sample_rate, latency_ms
+            else:
+                print(f"[ULTRON TTS] Fish Audio HTTP {resp.status_code}: {resp.text[:100]}, falling back to Edge-TTS...")
+
+        except Exception as e:
+            print(f"[ULTRON TTS] Fish Audio error ({e}), falling back to Edge-TTS...")
+
+        return self._synthesize_edge(text)
+
     def _synthesize_edge(self, text: str) -> tuple[np.ndarray, int, float]:
         """Synthesize via Edge-TTS (Neural Christopher) for realistic human emotion."""
         import asyncio
@@ -219,15 +266,18 @@ class TTSEngine:
         """
         Synthesize speech audio from text.
 
-        Uses Edge-TTS Neural Christopher when configured (for deep emotion & human swagger)
-        with automatic fallback to local Kokoro ONNX.
+        Tier 1: Fish Audio (custom Ultron voice clone)
+        Tier 2: Edge-TTS (Neural Christopher)
+        Tier 3: Kokoro ONNX (offline local)
         """
         cleaned_text = self.clean_text(text)
         if not cleaned_text:
             return np.array([], dtype=np.float32), config.TTS_SAMPLE_RATE, 0.0
 
-        provider = getattr(config, "TTS_PROVIDER", "edge")
-        if provider == "edge":
+        provider = getattr(config, "TTS_PROVIDER", "fish")
+        if provider == "fish":
+            return self._synthesize_fish(cleaned_text)
+        elif provider == "edge":
             return self._synthesize_edge(cleaned_text)
         else:
             return self._synthesize_kokoro(cleaned_text, voice, speed)

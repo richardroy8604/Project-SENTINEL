@@ -144,14 +144,19 @@ VISION_DETECT_PHONES = True       # Detect COCO class 67 (cell phone) held by tr
 # VOICE OUTPUT / TTS (Stage 6)
 # =============================================================================
 TTS_ENABLED = True
-TTS_PROVIDER = "edge"             # "edge" (Neural Christopher — emotional, human swagger) or "kokoro" (offline)
+TTS_PROVIDER = "fish"             # "fish" (Custom Ultron Clone), "edge" (Neural Christopher), "kokoro" (offline)
 
-# Neural Voice (Edge-TTS — 100% Free, realistic human breathing and inflection)
+# Fish Audio Configuration (Custom Voice Clone: 06cfdb3653a4496983d6ad77f98cc184)
+FISH_AUDIO_API_KEY = os.getenv("FISH_AUDIO_API_KEY", "")
+FISH_AUDIO_VOICE_ID = os.getenv("FISH_AUDIO_VOICE_ID", "06cfdb3653a4496983d6ad77f98cc184")
+FISH_AUDIO_MODEL = "s2.1-pro-free"
+
+# Neural Voice (Edge-TTS — Tier 2 Fallback)
 TTS_EDGE_VOICE = "en-US-ChristopherNeural"  # Deep, emotional, confident male voice
 TTS_EDGE_RATE = "+0%"             # Natural spoken pace
 TTS_EDGE_PITCH = "-3Hz"           # Deep baritone resonance
 
-# Offline Kokoro Fallback
+# Offline Kokoro Fallback (Tier 3 Fallback)
 TTS_MODEL_PATH = MODELS_DIR / "kokoro-v1.0.int8.onnx"
 TTS_VOICES_PATH = MODELS_DIR / "voices-v1.0.bin"
 TTS_VOICE = "hybrid_baritone"      # Options: "hybrid_baritone", "am_michael", "am_echo", "am_onyx"
