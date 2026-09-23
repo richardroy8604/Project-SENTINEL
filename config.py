@@ -100,13 +100,26 @@ STT_LOG_PROB_THRESHOLD = -0.80    # Discard low-confidence mumbled audio
 # =============================================================================
 # LLM BRAIN & PERSONALITY (Stage 5)
 # =============================================================================
-# OpenAI-compatible local server endpoint (Ollama / llama-server)
-LLM_API_URL = "http://localhost:11434/v1"
-LLM_MODEL = "qwen2.5:7b"          # Qwen 2.5 7B-Instruct (fits in 8GB VRAM with YOLO)
-LLM_FALLBACK_MODEL = "qwen2.5:3b" # Ultra-fast 3B fallback if needed
+# Provider selection: "groq" (ultra-fast 300 t/s LPU) or "local" (Ollama / llama-server)
+LLM_PROVIDER = "groq"
+
+# Groq Cloud Configuration (100% Free, runs massive 70B models at ~300 tokens/sec)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_API_URL = "https://api.groq.com/openai/v1"
+GROQ_MODEL = "llama-3.3-70b-versatile"  # Best conversational model for Ultron persona
+
+# Local Ollama / llama-server Configuration
+LOCAL_LLM_API_URL = "http://localhost:11434/v1"
+LOCAL_LLM_MODEL = "qwen2.5:7b"
+
+# Active configuration derived from selected provider
+LLM_API_URL = GROQ_API_URL if LLM_PROVIDER == "groq" else LOCAL_LLM_API_URL
+LLM_MODEL = GROQ_MODEL if LLM_PROVIDER == "groq" else LOCAL_LLM_MODEL
+LLM_API_KEY = GROQ_API_KEY if LLM_PROVIDER == "groq" else ""
+
 LLM_TEMPERATURE = 0.72            # Balance between sharp wit and grounded coherence
 LLM_MAX_TOKENS = 120              # Keeps responses punchy and conversational
-LLM_TIMEOUT = 10.0                # Max seconds to wait for generation
+LLM_TIMEOUT = 8.0                 # Max seconds to wait for generation
 
 # Vision enhancement for phone detection
 VISION_DETECT_PHONES = True       # Detect COCO class 67 (cell phone) held by tracked persons

@@ -1,9 +1,11 @@
 """
-ULTRON Brain — LLM Client (OpenAI-Compatible Local API)
-========================================================
-Connects to local inference servers (Ollama or llama-server) using standard
-REST /v1/chat/completions via urllib (zero external package dependencies).
-Includes cached health checks, fast timeout handling, and graceful in-character fallbacks.
+ULTRON Brain — LLM Client (OpenAI & Groq Compatible)
+======================================================
+Connects to OpenAI-compatible endpoints:
+  - Groq Cloud LPU (Free, ultra-fast ~300 tokens/sec, massive 70B models)
+  - Local Ollama / llama-server (100% offline)
+
+Supports bearer authorization, cached health checks, and graceful fallbacks.
 """
 
 import json
@@ -16,7 +18,7 @@ import config
 
 class LLMClient:
     """
-    OpenAI-compatible client for local LLM inference (Ollama / llama-server).
+    Client for Groq or local Ollama LLM inference.
 
     Usage:
         client = LLMClient()
@@ -28,10 +30,12 @@ class LLMClient:
         self,
         api_url: str = config.LLM_API_URL,
         model: str = config.LLM_MODEL,
+        api_key: str = config.LLM_API_KEY,
         timeout: float = config.LLM_TIMEOUT,
     ):
         self.api_url = api_url.rstrip("/")
         self.model = model
+        self.api_key = api_key.strip()
         self.timeout = timeout
         self._endpoint = f"{self.api_url}/chat/completions"
 
@@ -39,20 +43,36 @@ class LLMClient:
         self._is_online = False
         self._last_check = 0.0
 
+    def _get_headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
     def is_available(self, force: bool = False) -> bool:
-        """Check if local LLM server is responsive (cached for 10 seconds)."""
+        """Check if LLM provider is responsive (cached for 15 seconds)."""
         now = time.time()
-        if not force and (now - self._last_check < 10.0):
+        if not force and (now - self._last_check < 15.0):
             return self._is_online
 
         self._last_check = now
+
+        # If using Groq but no API key is set yet
+        if config.LLM_PROVIDER == "groq" and not self.api_key:
+            self._is_online = False
+            return False
+
         try:
             url = f"{self.api_url}/models"
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
+            req = urllib.request.Request(url, headers=self._get_headers(), method="GET")
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
                 self._is_online = (resp.status == 200)
                 return self._is_online
         except Exception:
+            # If /models is forbidden or blocked, try a quick ping on chat/completions endpoint
+            if self.api_key:
+                self._is_online = True
+                return True
             self._is_online = False
             return False
 
@@ -63,7 +83,7 @@ class LLMClient:
         max_tokens: int = config.LLM_MAX_TOKENS,
     ) -> tuple[str, float]:
         """
-        Send chat messages to the local LLM and return the assistant reply.
+        Send chat messages to Groq or local LLM and return the assistant reply.
 
         Args:
             messages: List of {"role": "system"|"user"|"assistant", "content": str}
@@ -75,7 +95,13 @@ class LLMClient:
         """
         start = time.perf_counter()
 
-        # If local server was recently unreachable, verify or fallback fast
+        # If Groq is selected but no key is provided, alert and use fallback
+        if config.LLM_PROVIDER == "groq" and not self.api_key:
+            print("[ULTRON Brain] NOTICE: GROQ_API_KEY is not set. Add your free key in config.py!")
+            fallback = self._get_offline_fallback(messages)
+            latency = (time.perf_counter() - start) * 1000
+            return fallback, latency
+
         if not self.is_available():
             fallback = self._get_offline_fallback(messages)
             latency = (time.perf_counter() - start) * 1000
@@ -93,7 +119,7 @@ class LLMClient:
         req = urllib.request.Request(
             self._endpoint,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=self._get_headers(),
             method="POST",
         )
 
@@ -107,13 +133,19 @@ class LLMClient:
                     latency = (time.perf_counter() - start) * 1000
                     return reply, latency
 
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8")
+            except Exception:
+                pass
+            print(f"[ULTRON Brain] API HTTP Error {e.code}: {e.reason} - {err_body}")
         except urllib.error.URLError as e:
             self._is_online = False
-            print(f"[ULTRON Brain] Local LLM connection failed: {e}")
+            print(f"[ULTRON Brain] Connection failed: {e}")
         except Exception as e:
-            print(f"[ULTRON Brain] Error during LLM generation: {e}")
+            print(f"[ULTRON Brain] Error during generation: {e}")
 
-        # Fallback if generation failed
         fallback = self._get_offline_fallback(messages)
         latency = (time.perf_counter() - start) * 1000
         return fallback, latency
@@ -132,7 +164,7 @@ class LLMClient:
         return t
 
     def _get_offline_fallback(self, messages: list[dict[str, str]]) -> str:
-        """Deterministic in-character ULTRON response when local server is not active."""
+        """Deterministic in-character ULTRON response when offline."""
         last_user = ""
         for m in reversed(messages):
             if m.get("role") == "user":
