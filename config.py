@@ -146,7 +146,9 @@ VISION_DETECT_PHONES = True       # Detect COCO class 67 (cell phone) held by tr
 TTS_ENABLED = True
 TTS_MODEL_PATH = MODELS_DIR / "kokoro-v1.0.int8.onnx"
 TTS_VOICES_PATH = MODELS_DIR / "voices-v1.0.bin"
-TTS_VOICE = "am_onyx"             # Deep, calm, authoritative American male voice
-TTS_SPEED = 1.05                  # Crisp, natural cadence
+TTS_VOICE = "hybrid_baritone"      # Options: "hybrid_baritone", "am_michael", "am_echo", "am_onyx"
+TTS_SPEED = 1.15                  # 1.15x = confident, conversational cadence (no slow narrator effect)
+TTS_SENTENCE_PAUSE = 0.12         # Snappy breath between sentences (default was 0.25)
+TTS_CLAUSE_PAUSE = 0.06           # Crisp comma transitions (default was 0.10)
 TTS_SAMPLE_RATE = 24000           # Native Kokoro sample rate
 TTS_REVERB_TAIL_MS = 250          # Silence tail (ms) before unmuting mic after speech

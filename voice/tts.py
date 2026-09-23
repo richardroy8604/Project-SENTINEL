@@ -62,10 +62,10 @@ class TTSEngine:
             load_time = (time.perf_counter() - start) * 1000
 
             available_voices = self._kokoro.get_voices()
-            if self.default_voice not in available_voices:
-                print(f"[ULTRON TTS] Warning: Voice '{self.default_voice}' not found in voices.bin.")
-                if available_voices:
-                    self.default_voice = available_voices[0]
+            presets = {"hybrid_baritone", "dark_sarcastic"}
+            if self.default_voice not in available_voices and self.default_voice not in presets:
+                print(f"[ULTRON TTS] Warning: Voice '{self.default_voice}' not recognized.")
+                self.default_voice = "am_michael" if "am_michael" in available_voices else available_voices[0]
 
             self._is_loaded = True
             print(f"[ULTRON TTS] Kokoro TTS loaded in {load_time:.0f}ms -- Voice: '{self.default_voice}'")
@@ -111,19 +111,45 @@ class TTSEngine:
 
         return t
 
+    def _resolve_voice(self, voice_spec: str | np.ndarray) -> str | np.ndarray:
+        """Resolve voice name, blend preset, or raw vector."""
+        if isinstance(voice_spec, np.ndarray):
+            return voice_spec
+
+        name = (voice_spec or self.default_voice).strip().lower()
+
+        if name == "hybrid_baritone":
+            # 50% Onyx (baritone depth) + 50% Michael (confident spoken realism)
+            v_onyx = self._kokoro.get_voice_style("am_onyx")
+            v_mike = self._kokoro.get_voice_style("am_michael")
+            return 0.5 * v_onyx + 0.5 * v_mike
+
+        if name == "dark_sarcastic":
+            # 60% Fenrir (deep menace) + 40% Puck (witty sarcasm)
+            v_fen = self._kokoro.get_voice_style("am_fenrir")
+            v_puck = self._kokoro.get_voice_style("am_puck")
+            return 0.6 * v_fen + 0.4 * v_puck
+
+        if name in self._kokoro.get_voices():
+            return name
+
+        # Default fallback
+        available = self._kokoro.get_voices()
+        return "am_michael" if "am_michael" in available else available[0]
+
     def synthesize(
         self,
         text: str,
-        voice: str | None = None,
+        voice: str | np.ndarray | None = None,
         speed: float | None = None,
     ) -> tuple[np.ndarray, int, float]:
         """
-        Synthesize speech audio from text.
+        Synthesize speech audio from text with natural conversational cadence.
 
         Args:
             text: Dialogue string to synthesize
-            voice: Voice ID (defaults to config.TTS_VOICE, e.g. 'am_onyx')
-            speed: Speech rate multiplier (defaults to config.TTS_SPEED, e.g. 1.05)
+            voice: Voice ID or preset (defaults to config.TTS_VOICE)
+            speed: Speech rate multiplier (defaults to config.TTS_SPEED, e.g. 1.15)
 
         Returns:
             (audio_samples_float32, sample_rate, latency_ms)
@@ -136,8 +162,10 @@ class TTSEngine:
         if not cleaned_text:
             return np.array([], dtype=np.float32), config.TTS_SAMPLE_RATE, 0.0
 
-        target_voice = voice or self.default_voice
+        target_voice = self._resolve_voice(voice or self.default_voice)
         target_speed = speed if speed is not None else self.default_speed
+        sent_pause = getattr(config, "TTS_SENTENCE_PAUSE", 0.12)
+        clause_pause = getattr(config, "TTS_CLAUSE_PAUSE", 0.06)
 
         start = time.perf_counter()
         try:
@@ -146,6 +174,8 @@ class TTSEngine:
                     cleaned_text,
                     voice=target_voice,
                     speed=target_speed,
+                    sentence_pause=sent_pause,
+                    clause_pause=clause_pause,
                     lang="en-us",
                 )
 
