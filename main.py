@@ -1,0 +1,203 @@
+"""
+ULTRON — Main Entry Point
+===========================
+Initializes all modules and runs the main loop.
+
+Stage 1: Camera capture + Dear PyGui dashboard with AI blob.
+Stage 2: YOLO11s person detection + ByteTrack tracking.
+Stage 3: Event bus + State machine + Context manager.
+Stage 4: Audio capture + Silero VAD v5 + faster-whisper STT.
+"""
+
+import sys
+import time
+
+import cv2
+
+import config
+from setup_models import ensure_vad_model
+from core.event_bus import EventBus, EventTypes
+from core.state_machine import StateMachine
+from core.context import ContextManager
+from vision.camera import Camera
+from vision.detector import PersonDetector
+from audio.listener import AudioListener
+from ui.dashboard import Dashboard
+
+
+def main():
+    print("=" * 60)
+    print("  U L T R O N  —  AI Security System")
+    print("=" * 60)
+    print()
+
+    # ── Ensure Required Models ──────────────────────────────────────
+    print("[ULTRON] Verifying model dependencies...")
+    ensure_vad_model()
+
+    # ── Initialize Core Systems ─────────────────────────────────────
+    print("[ULTRON] Initializing core systems...")
+    event_bus = EventBus()
+    state_machine = StateMachine(event_bus)
+    context = ContextManager(event_bus)
+
+    # ── Initialize Camera ───────────────────────────────────────────
+    print("[ULTRON] Initializing camera...")
+    camera = Camera()
+    if not camera.start():
+        print("[ULTRON] FATAL: Cannot open camera. Exiting.")
+        sys.exit(1)
+
+    time.sleep(0.5)
+
+    # ── Initialize Person Detector ──────────────────────────────────
+    print("[ULTRON] Initializing person detector...")
+    detector = PersonDetector()
+    if not detector.load():
+        print("[ULTRON] WARNING: Detector failed to load.")
+        detector = None
+
+    # ── Initialize Dashboard ────────────────────────────────────────
+    print("[ULTRON] Initializing dashboard...")
+    dashboard = Dashboard()
+    dashboard.setup()
+
+    # ── Initialize Audio Pipeline (VAD + STT) ───────────────────────
+    print("[ULTRON] Initializing audio pipeline...")
+    audio_listener = AudioListener(
+        event_bus=event_bus,
+        on_level=dashboard.update_audio_level,
+    )
+    if not audio_listener.start():
+        print("[ULTRON] WARNING: Audio pipeline failed to start.")
+        audio_listener = None
+
+    # Wire dashboard to event bus for logging and state visualization
+    def on_state_changed(event):
+        old = event.data.get("old_state", "?")
+        new = event.data.get("new_state", "?")
+        reason = event.data.get("reason", "")
+        dashboard.log_event(f"[STATE] {old} -> {new} ({reason})")
+        dashboard.set_security_state(new)
+
+    def on_speech_detected(event):
+        prob = event.data.get("probability", 0.0)
+        dashboard.log_event(f"[AUDIO] Speech detected (prob: {prob:.0%})")
+
+    def on_speech_recognized(event):
+        text = event.data.get("text", "")
+        latency = event.data.get("latency_ms", 0.0)
+        dashboard.update_last_speech(text)
+        dashboard.log_event(f"[SPEECH] \"{text}\" ({latency:.0f}ms)")
+
+    event_bus.subscribe(EventTypes.STATE_CHANGED, on_state_changed)
+    event_bus.subscribe(EventTypes.SPEECH_DETECTED, on_speech_detected)
+    event_bus.subscribe(EventTypes.SPEECH_RECOGNIZED, on_speech_recognized)
+
+    dashboard.log_event("[ULTRON] Core systems online.")
+    dashboard.log_event("[ULTRON] Camera active.")
+    if detector and detector.is_loaded:
+        dashboard.log_event(f"[ULTRON] Vision: YOLO11s on {config.DETECTION_DEVICE}")
+    if audio_listener:
+        dashboard.log_event(f"[ULTRON] Audio: Silero VAD + faster-whisper ({config.STT_MODEL_SIZE})")
+    dashboard.log_event("[ULTRON] Monitoring...")
+
+    # ── Main Loop ───────────────────────────────────────────────────
+    print("[ULTRON] System online. Close the window to exit.")
+    print()
+
+    # Track person events to avoid duplicate event publishing
+    previously_seen_ids: set[int] = set()
+
+    try:
+        while True:
+            # 1. Get latest camera frame
+            frame_bgr = camera.get_frame()
+            if frame_bgr is None:
+                if not dashboard.render_frame():
+                    break
+                continue
+
+            # 2. Run person detection + tracking
+            if detector and detector.is_loaded:
+                result = detector.detect(frame_bgr, draw=True)
+
+                display_frame = result.frame_annotated if result.frame_annotated is not None else frame_bgr
+                display_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+
+                # Update dashboard detection stats
+                dashboard.update_detection_info(
+                    person_count=result.person_count,
+                    inference_ms=result.inference_ms,
+                )
+
+                # ── Publish enter/leave events via event bus ────────
+                current_ids = {
+                    p.track_id for p in result.persons if p.track_id >= 0
+                }
+
+                # New persons entering
+                for tid in current_ids - previously_seen_ids:
+                    event_bus.publish(EventTypes.PERSON_ENTERED, {
+                        "track_id": tid,
+                    })
+                    dashboard.log_event(
+                        f"[VISION] Person ID:{tid} entered view."
+                    )
+
+                # Persons leaving
+                for tid in previously_seen_ids - current_ids:
+                    # Calculate how long they were present
+                    person_ctx = None
+                    for p in context.persons:
+                        if p.track_id == tid:
+                            person_ctx = p
+                            break
+                    duration = (
+                        int(person_ctx.dwell_time) if person_ctx else 0
+                    )
+                    event_bus.publish(EventTypes.PERSON_LEFT, {
+                        "track_id": tid,
+                        "duration": duration,
+                    })
+                    dashboard.log_event(
+                        f"[VISION] Person ID:{tid} left view ({duration}s)."
+                    )
+
+                previously_seen_ids = current_ids
+
+                # Update context with current persons
+                for person in result.persons:
+                    if person.track_id >= 0:
+                        context.update_person(person.track_id)
+
+                # Sync person count to state machine
+                state_machine.set_person_count(len(current_ids))
+
+            else:
+                display_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+            # 3. Update video display
+            dashboard.update_video(display_rgb)
+            dashboard.update_camera_fps(camera.fps)
+
+            # 4. Render UI frame (includes blob animation)
+            if not dashboard.render_frame():
+                break
+
+    except KeyboardInterrupt:
+        print("\n[ULTRON] Keyboard interrupt received.")
+
+    finally:
+        print("[ULTRON] Shutting down...")
+        if audio_listener:
+            audio_listener.stop()
+        camera.stop()
+        if detector:
+            detector.release()
+        dashboard.shutdown()
+        print("[ULTRON] System offline.")
+
+
+if __name__ == "__main__":
+    main()

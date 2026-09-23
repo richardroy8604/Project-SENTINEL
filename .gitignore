@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Large Model Weights (Auto-downloaded by setup_models.py / Ultralytics)
+models/*
+!models/.gitkeep
+*.pt
+*.onnx
+*.bin
+*.gguf
+*.engine
+
+# Audio/Video Recording Dumps & Logs
+logs/*
+!logs/.gitkeep
+*.wav
+*.mp3
+*.mp4
+*.avi
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+Desktop.ini
