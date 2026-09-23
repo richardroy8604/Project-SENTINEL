@@ -7,6 +7,7 @@ Stage 1: Camera capture + Dear PyGui dashboard with AI blob.
 Stage 2: YOLO11s person detection + ByteTrack tracking.
 Stage 3: Event bus + State machine + Context manager.
 Stage 4: Audio capture + Silero VAD v5 + faster-whisper STT.
+Stage 5: LLM Brain + Persona Engine (Qwen 2.5 7B) + Phone detection.
 """
 
 import sys
@@ -22,6 +23,7 @@ from core.context import ContextManager
 from vision.camera import Camera
 from vision.detector import PersonDetector
 from audio.listener import AudioListener
+from brain.reasoning import ReasoningEngine
 from ui.dashboard import Dashboard
 
 
@@ -50,8 +52,8 @@ def main():
 
     time.sleep(0.5)
 
-    # ── Initialize Person Detector ──────────────────────────────────
-    print("[ULTRON] Initializing person detector...")
+    # ── Initialize Person & Phone Detector ──────────────────────────
+    print("[ULTRON] Initializing vision detector...")
     detector = PersonDetector()
     if not detector.load():
         print("[ULTRON] WARNING: Detector failed to load.")
@@ -72,6 +74,15 @@ def main():
         print("[ULTRON] WARNING: Audio pipeline failed to start.")
         audio_listener = None
 
+    # ── Initialize LLM Brain (Reasoning Engine) ─────────────────────
+    print("[ULTRON] Initializing LLM brain & personality...")
+    brain = ReasoningEngine(
+        event_bus=event_bus,
+        context_manager=context,
+        on_reply=dashboard.update_ultron_reply,
+    )
+    brain.start()
+
     # Wire dashboard to event bus for logging and state visualization
     def on_state_changed(event):
         old = event.data.get("old_state", "?")
@@ -88,18 +99,28 @@ def main():
         text = event.data.get("text", "")
         latency = event.data.get("latency_ms", 0.0)
         dashboard.update_last_speech(text)
-        dashboard.log_event(f"[SPEECH] \"{text}\" ({latency:.0f}ms)")
+        dashboard.log_event(f"[SPEECH] Heard: \"{text}\" ({latency:.0f}ms)")
+
+    def on_response_generated(event):
+        reply = event.data.get("text", "")
+        latency = event.data.get("latency_ms", 0.0)
+        dashboard.update_ultron_reply(reply)
+        dashboard.log_event(f"[ULTRON] \"{reply}\" ({latency:.0f}ms)")
+        dashboard.set_blob_speaking(True, intensity=0.9)
 
     event_bus.subscribe(EventTypes.STATE_CHANGED, on_state_changed)
     event_bus.subscribe(EventTypes.SPEECH_DETECTED, on_speech_detected)
     event_bus.subscribe(EventTypes.SPEECH_RECOGNIZED, on_speech_recognized)
+    event_bus.subscribe(EventTypes.RESPONSE_GENERATED, on_response_generated)
 
     dashboard.log_event("[ULTRON] Core systems online.")
     dashboard.log_event("[ULTRON] Camera active.")
     if detector and detector.is_loaded:
-        dashboard.log_event(f"[ULTRON] Vision: YOLO11s on {config.DETECTION_DEVICE}")
+        phone_tag = " + Cell Phone Detection" if config.VISION_DETECT_PHONES else ""
+        dashboard.log_event(f"[ULTRON] Vision: YOLO11s on {config.DETECTION_DEVICE}{phone_tag}")
     if audio_listener:
         dashboard.log_event(f"[ULTRON] Audio: Silero VAD + faster-whisper ({config.STT_MODEL_SIZE})")
+    dashboard.log_event(f"[ULTRON] Brain: Persona active ({config.LLM_MODEL})")
     dashboard.log_event("[ULTRON] Monitoring...")
 
     # ── Main Loop ───────────────────────────────────────────────────
@@ -118,7 +139,7 @@ def main():
                     break
                 continue
 
-            # 2. Run person detection + tracking
+            # 2. Run person & phone detection + tracking
             if detector and detector.is_loaded:
                 result = detector.detect(frame_bgr, draw=True)
 
@@ -166,10 +187,12 @@ def main():
 
                 previously_seen_ids = current_ids
 
-                # Update context with current persons
+                # Update context with current persons & holding phone state
                 for person in result.persons:
                     if person.track_id >= 0:
-                        context.update_person(person.track_id)
+                        context.update_person(
+                            person.track_id, holding_phone=person.holding_phone
+                        )
 
                 # Sync person count to state machine
                 state_machine.set_person_count(len(current_ids))

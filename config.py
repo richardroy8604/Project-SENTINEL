@@ -98,12 +98,22 @@ STT_NO_SPEECH_THRESHOLD = 0.40    # Discard if model is >40% confident it's non-
 STT_LOG_PROB_THRESHOLD = -0.80    # Discard low-confidence mumbled audio
 
 # =============================================================================
+# LLM BRAIN & PERSONALITY (Stage 5)
+# =============================================================================
+# OpenAI-compatible local server endpoint (Ollama / llama-server)
+LLM_API_URL = "http://localhost:11434/v1"
+LLM_MODEL = "qwen2.5:7b"          # Qwen 2.5 7B-Instruct (fits in 8GB VRAM with YOLO)
+LLM_FALLBACK_MODEL = "qwen2.5:3b" # Ultra-fast 3B fallback if needed
+LLM_TEMPERATURE = 0.72            # Balance between sharp wit and grounded coherence
+LLM_MAX_TOKENS = 120              # Keeps responses punchy and conversational
+LLM_TIMEOUT = 10.0                # Max seconds to wait for generation
+
+# Vision enhancement for phone detection
+VISION_DETECT_PHONES = True       # Detect COCO class 67 (cell phone) held by tracked persons
+
+# =============================================================================
 # FUTURE STAGE CONFIGS (Placeholders — will be populated as we build)
 # =============================================================================
-
-# Stage 5: LLM
-# LLM_API_URL = "http://localhost:8080/v1"
-# LLM_MODEL = "qwen2.5-7b-instruct"
 
 # Stage 6: TTS
 # TTS_VOICE = "am_onyx"

@@ -30,6 +30,7 @@ class PersonDetection:
     confidence: float          # Detection confidence 0.0 - 1.0
     center: tuple[int, int]    # Center point (cx, cy)
     bbox_area: int             # Bounding box area in pixels
+    holding_phone: bool = False  # True if person is holding/recording with a cell phone
 
 
 @dataclass
@@ -102,59 +103,83 @@ class PersonDetector:
 
         start_time = time.perf_counter()
 
+        # Classes to detect: 0=person, 67=cell phone
+        classes_to_detect = [0, 67] if config.VISION_DETECT_PHONES else [0]
+
         # Run YOLO tracking (detection + ByteTrack in one call)
-        # classes=[0] filters for "person" only
-        # persist=True keeps track IDs across frames
         results = self._model.track(
             source=frame,
-            classes=[0],                      # Person class only
+            classes=classes_to_detect,
             conf=self.confidence,
             device=self.device,
-            persist=True,                     # Persistent tracking
-            tracker="bytetrack.yaml",         # ByteTrack algorithm
-            verbose=False,                    # No console spam
+            persist=True,
+            tracker="bytetrack.yaml",
+            verbose=False,
         )
 
         inference_ms = (time.perf_counter() - start_time) * 1000
 
-        # Parse results
-        persons = []
+        # Parse results: separate persons and phones
+        raw_persons = []
+        phone_boxes = []
         result_obj = results[0] if results else None
 
         if result_obj and result_obj.boxes is not None and len(result_obj.boxes) > 0:
             boxes = result_obj.boxes
 
             for i in range(len(boxes)):
-                # Bounding box coordinates
+                cls_id = int(boxes.cls[i].cpu().numpy())
                 x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy().astype(int)
-
-                # Track ID (-1 if tracking failed for this detection)
-                track_id = -1
-                if boxes.id is not None:
-                    track_id = int(boxes.id[i].cpu().numpy())
-
-                # Confidence
                 conf = float(boxes.conf[i].cpu().numpy())
 
-                # Center point
-                cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
+                if cls_id == 67:  # Cell phone
+                    phone_boxes.append((x1, y1, x2, y2, conf))
+                elif cls_id == 0:  # Person
+                    track_id = -1
+                    if boxes.id is not None:
+                        try:
+                            track_id = int(boxes.id[i].cpu().numpy())
+                        except Exception:
+                            pass
 
-                # Area
-                area = (x2 - x1) * (y2 - y1)
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    area = (x2 - x1) * (y2 - y1)
 
-                persons.append(PersonDetection(
-                    track_id=track_id,
-                    bbox=(x1, y1, x2, y2),
-                    confidence=conf,
-                    center=(cx, cy),
-                    bbox_area=area,
-                ))
+                    raw_persons.append({
+                        "track_id": track_id,
+                        "bbox": (x1, y1, x2, y2),
+                        "confidence": conf,
+                        "center": (cx, cy),
+                        "bbox_area": area,
+                    })
+
+        # Match phones to persons (phone center located inside or near person bbox)
+        persons = []
+        for p in raw_persons:
+            px1, py1, px2, py2 = p["bbox"]
+            holding_phone = False
+            for phx1, phy1, phx2, phy2, _ in phone_boxes:
+                ph_cx = (phx1 + phx2) // 2
+                ph_cy = (phy1 + phy2) // 2
+                # If phone is in person's upper 80% bounding area
+                if (px1 - 20 <= ph_cx <= px2 + 20) and (py1 <= ph_cy <= py1 + int((py2 - py1) * 0.85)):
+                    holding_phone = True
+                    break
+
+            persons.append(PersonDetection(
+                track_id=p["track_id"],
+                bbox=p["bbox"],
+                confidence=p["confidence"],
+                center=p["center"],
+                bbox_area=p["bbox_area"],
+                holding_phone=holding_phone,
+            ))
 
         # Draw overlays if requested
         frame_annotated = None
         if draw:
-            frame_annotated = self._draw_overlays(frame.copy(), persons)
+            frame_annotated = self._draw_overlays(frame.copy(), persons, phone_boxes)
 
         return DetectionResult(
             persons=persons,
@@ -164,21 +189,28 @@ class PersonDetector:
         )
 
     def _draw_overlays(
-        self, frame: np.ndarray, persons: list[PersonDetection]
+        self,
+        frame: np.ndarray,
+        persons: list[PersonDetection],
+        phone_boxes: list | None = None,
     ) -> np.ndarray:
-        """Draw detection boxes, IDs, and confidence on the frame."""
+        """Draw detection boxes, IDs, phone badges, and confidence on the frame."""
 
         for person in persons:
             x1, y1, x2, y2 = person.bbox
             track_id = person.track_id
             conf = person.confidence
+            holding_phone = person.holding_phone
 
-            # Color: green for tracked, yellow for untracked
-            if track_id >= 0:
-                color = (0, 255, 100)  # Green (BGR)
+            # Color: Cyan if holding phone/recording, green for tracked, yellow for untracked
+            if holding_phone:
+                color = (255, 215, 0)   # Cyan / Gold in BGR
+                label = f"ID:{track_id} [REC PHONE] {conf:.0%}"
+            elif track_id >= 0:
+                color = (0, 255, 100)   # Green (BGR)
                 label = f"ID:{track_id} {conf:.0%}"
             else:
-                color = (0, 255, 255)  # Yellow
+                color = (0, 255, 255)   # Yellow
                 label = f"PERSON {conf:.0%}"
 
             # Bounding box — slightly thick for visibility
@@ -225,6 +257,21 @@ class PersonDetector:
 
             # Center dot
             cv2.circle(frame, person.center, 4, color, -1)
+
+        # Draw detected phone boxes
+        if phone_boxes:
+            for phx1, phy1, phx2, phy2, phconf in phone_boxes:
+                cv2.rectangle(frame, (phx1, phy1), (phx2, phy2), (255, 215, 0), 2)
+                cv2.putText(
+                    frame,
+                    f"PHONE {phconf:.0%}",
+                    (phx1, max(15, phy1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    (255, 215, 0),
+                    1,
+                    cv2.LINE_AA,
+                )
 
         # Person count overlay — top-right
         count_text = f"PERSONS: {len(persons)}"

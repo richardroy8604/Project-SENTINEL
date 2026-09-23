@@ -183,6 +183,16 @@ class Dashboard:
                         wrap=330,
                     )
 
+                    # ULTRON's Reply
+                    dpg.add_spacer(height=2)
+                    dpg.add_text("ULTRON:", color=(255, 160, 40, 255))
+                    dpg.add_text(
+                        "...",
+                        tag="ultron_reply_text",
+                        color=(255, 220, 120, 255),
+                        wrap=330,
+                    )
+
             dpg.add_spacer(height=8)
             dpg.add_separator()
             dpg.add_spacer(height=4)
@@ -259,6 +269,10 @@ class Dashboard:
     def update_last_speech(self, text: str):
         """Update last recognized speech text."""
         dpg.set_value("last_speech_text", f"\"{text}\"")
+
+    def update_ultron_reply(self, text: str):
+        """Update ULTRON's latest reply text."""
+        dpg.set_value("ultron_reply_text", f"\"{text}\"")
 
 
 

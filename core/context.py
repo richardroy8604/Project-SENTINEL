@@ -29,6 +29,7 @@ class PersonContext:
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
     greeting_given: bool = False
+    holding_phone: bool = False
 
     @property
     def dwell_time(self) -> float:
@@ -79,13 +80,16 @@ class ContextManager:
 
     # ── Person Tracking ─────────────────────────────────────────────
 
-    def update_person(self, track_id: int):
-        """Update the last-seen time for a tracked person."""
+    def update_person(self, track_id: int, holding_phone: bool = False):
+        """Update the last-seen time and holding_phone state for a tracked person."""
         with self._lock:
             if track_id in self._persons:
                 self._persons[track_id].last_seen = time.time()
+                self._persons[track_id].holding_phone = holding_phone
             else:
-                self._persons[track_id] = PersonContext(track_id=track_id)
+                self._persons[track_id] = PersonContext(
+                    track_id=track_id, holding_phone=holding_phone
+                )
 
     def mark_greeting_given(self, track_id: int):
         """Mark that ULTRON has greeted this person."""
@@ -148,8 +152,9 @@ class ContextManager:
             for p in self._persons.values():
                 dwell = int(p.dwell_time)
                 greeted = "YES" if p.greeting_given else "NO"
+                phone_tag = ", HOLDING PHONE / RECORDING: YES" if p.holding_phone else ""
                 lines.append(
-                    f"  Person ID:{p.track_id} — present {dwell}s, greeted: {greeted}"
+                    f"  Person ID:{p.track_id} — present {dwell}s, greeted: {greeted}{phone_tag}"
                 )
 
             if self._last_speech_text:
