@@ -65,6 +65,24 @@ class AudioListener:
         self._worker_thread: threading.Thread | None = None
         self._running = False
 
+        # Half-duplex mic ducking: ignore mic while ULTRON is speaking aloud
+        self._ducked_until: float = 0.0
+        self.event_bus.subscribe(EventTypes.SPEAKING_STARTED, self._on_speaking_started)
+        self.event_bus.subscribe(EventTypes.SPEAKING_FINISHED, self._on_speaking_finished)
+
+    def _on_speaking_started(self, event):
+        """Duck microphone while ULTRON is speaking."""
+        self._ducked_until = float("inf")
+        if self._is_speaking:
+            self._is_speaking = False
+            self._utterance_buffer.clear()
+            self._preroll_buffer.clear()
+
+    def _on_speaking_finished(self, event):
+        """Un-duck microphone after room reverb settles."""
+        reverb_tail = getattr(config, "TTS_REVERB_TAIL_MS", 250) / 1000.0
+        self._ducked_until = time.time() + reverb_tail
+
     def load(self) -> bool:
         """Initialize VAD and STT models."""
         print("[ULTRON Audio] Initializing audio models...")
@@ -98,6 +116,14 @@ class AudioListener:
     def _on_audio_frame(self, frame: np.ndarray):
         """Callback invoked by AudioCapture for each 512-sample block (32ms)."""
         if not self._running:
+            return
+
+        # Half-duplex mic ducking: ignore mic while ULTRON is speaking + reverb tail
+        if time.time() < self._ducked_until:
+            if self._is_speaking:
+                self._is_speaking = False
+                self._utterance_buffer.clear()
+                self._preroll_buffer.clear()
             return
 
         is_voice, prob = self.vad.is_speech(frame)

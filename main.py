@@ -16,7 +16,7 @@ import time
 import cv2
 
 import config
-from setup_models import ensure_vad_model
+from setup_models import ensure_vad_model, ensure_tts_models
 from core.event_bus import EventBus, EventTypes
 from core.state_machine import StateMachine
 from core.context import ContextManager
@@ -24,6 +24,7 @@ from vision.camera import Camera
 from vision.detector import PersonDetector
 from audio.listener import AudioListener
 from brain.reasoning import ReasoningEngine
+from voice import TTSEngine, VoicePlayback
 from ui.dashboard import Dashboard
 
 
@@ -36,6 +37,7 @@ def main():
     # ── Ensure Required Models ──────────────────────────────────────
     print("[ULTRON] Verifying model dependencies...")
     ensure_vad_model()
+    ensure_tts_models()
 
     # ── Initialize Core Systems ─────────────────────────────────────
     print("[ULTRON] Initializing core systems...")
@@ -63,6 +65,16 @@ def main():
     print("[ULTRON] Initializing dashboard...")
     dashboard = Dashboard()
     dashboard.setup()
+
+    # ── Initialize Voice Output (Kokoro TTS) ────────────────────────
+    print("[ULTRON] Initializing voice output (Kokoro TTS)...")
+    voice_playback = VoicePlayback(
+        event_bus=event_bus,
+        on_level=dashboard.update_audio_level,
+    )
+    if not voice_playback.start():
+        print("[ULTRON] WARNING: Voice playback failed to start.")
+        voice_playback = None
 
     # ── Initialize Audio Pipeline (VAD + STT) ───────────────────────
     print("[ULTRON] Initializing audio pipeline...")
@@ -101,17 +113,28 @@ def main():
         dashboard.update_last_speech(text)
         dashboard.log_event(f"[SPEECH] Heard: \"{text}\" ({latency:.0f}ms)")
 
+    def on_speaking_started(event):
+        dashboard.set_blob_speaking(True, intensity=1.0)
+        dashboard.log_event("[VOICE] Speaking...")
+
+    def on_speaking_finished(event):
+        dashboard.set_blob_speaking(False)
+        dashboard.update_audio_level(0.0)
+
     def on_response_generated(event):
         reply = event.data.get("text", "")
         latency = event.data.get("latency_ms", 0.0)
         dashboard.update_ultron_reply(reply)
         dashboard.log_event(f"[ULTRON] \"{reply}\" ({latency:.0f}ms)")
-        dashboard.set_blob_speaking(True, intensity=0.9)
+        if voice_playback:
+            voice_playback.speak(reply)
 
     event_bus.subscribe(EventTypes.STATE_CHANGED, on_state_changed)
     event_bus.subscribe(EventTypes.SPEECH_DETECTED, on_speech_detected)
     event_bus.subscribe(EventTypes.SPEECH_RECOGNIZED, on_speech_recognized)
     event_bus.subscribe(EventTypes.RESPONSE_GENERATED, on_response_generated)
+    event_bus.subscribe(EventTypes.SPEAKING_STARTED, on_speaking_started)
+    event_bus.subscribe(EventTypes.SPEAKING_FINISHED, on_speaking_finished)
 
     dashboard.log_event("[ULTRON] Core systems online.")
     dashboard.log_event("[ULTRON] Camera active.")
@@ -121,6 +144,8 @@ def main():
     if audio_listener:
         dashboard.log_event(f"[ULTRON] Audio: Silero VAD + faster-whisper ({config.STT_MODEL_SIZE})")
     dashboard.log_event(f"[ULTRON] Brain: Persona active ({config.LLM_MODEL})")
+    if voice_playback and voice_playback.tts.is_loaded:
+        dashboard.log_event(f"[ULTRON] Voice: Kokoro TTS ({config.TTS_VOICE})")
     dashboard.log_event("[ULTRON] Monitoring...")
 
     # ── Main Loop ───────────────────────────────────────────────────
@@ -213,6 +238,8 @@ def main():
 
     finally:
         print("[ULTRON] Shutting down...")
+        if voice_playback:
+            voice_playback.stop()
         if audio_listener:
             audio_listener.stop()
         camera.stop()

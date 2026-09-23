@@ -141,8 +141,12 @@ LLM_TIMEOUT = 8.0                 # Max seconds to wait for generation
 VISION_DETECT_PHONES = True       # Detect COCO class 67 (cell phone) held by tracked persons
 
 # =============================================================================
-# FUTURE STAGE CONFIGS (Placeholders — will be populated as we build)
+# VOICE OUTPUT / TTS (Stage 6)
 # =============================================================================
-
-# Stage 6: TTS
-# TTS_VOICE = "am_onyx"
+TTS_ENABLED = True
+TTS_MODEL_PATH = MODELS_DIR / "kokoro-v1.0.int8.onnx"
+TTS_VOICES_PATH = MODELS_DIR / "voices-v1.0.bin"
+TTS_VOICE = "am_onyx"             # Deep, calm, authoritative American male voice
+TTS_SPEED = 1.05                  # Crisp, natural cadence
+TTS_SAMPLE_RATE = 24000           # Native Kokoro sample rate
+TTS_REVERB_TAIL_MS = 250          # Silence tail (ms) before unmuting mic after speech
