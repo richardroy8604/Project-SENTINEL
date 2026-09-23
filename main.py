@@ -144,8 +144,9 @@ def main():
     if audio_listener:
         dashboard.log_event(f"[ULTRON] Audio: Silero VAD + faster-whisper ({config.STT_MODEL_SIZE})")
     dashboard.log_event(f"[ULTRON] Brain: Persona active ({config.LLM_MODEL})")
-    if voice_playback and voice_playback.tts.is_loaded:
-        dashboard.log_event(f"[ULTRON] Voice: Kokoro TTS ({config.TTS_VOICE})")
+    if voice_playback:
+        v_name = config.TTS_EDGE_VOICE.replace("en-US-", "").replace("Neural", "") if config.TTS_PROVIDER == "edge" else config.TTS_VOICE
+        dashboard.log_event(f"[ULTRON] Voice: {v_name} ({config.TTS_PROVIDER.upper()})")
     dashboard.log_event("[ULTRON] Monitoring...")
 
     # ── Main Loop ───────────────────────────────────────────────────

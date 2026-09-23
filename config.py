@@ -144,21 +144,19 @@ VISION_DETECT_PHONES = True       # Detect COCO class 67 (cell phone) held by tr
 # VOICE OUTPUT / TTS (Stage 6)
 # =============================================================================
 TTS_ENABLED = True
-TTS_PROVIDER = "edge"              # "edge" (highest emotional inflection) or "kokoro" (offline)
+TTS_PROVIDER = "edge"             # "edge" (Neural Christopher — emotional, human swagger) or "kokoro" (offline)
 
-# Edge Neural TTS (Primary — realistic human inflection, dramatic pauses, vocal fry)
-TTS_EDGE_VOICE = "en-US-ChristopherNeural"  # Deep, emotional, intimidating male voice
-TTS_EDGE_PITCH = "-8Hz"            # Deeper fundamental pitch
-TTS_EDGE_RATE = "-2%"              # Deliberate, confident conversational cadence
-TTS_ULTRON_FX = True               # Adds subtle metallic synthetic resonance
+# Neural Voice (Edge-TTS — 100% Free, realistic human breathing and inflection)
+TTS_EDGE_VOICE = "en-US-ChristopherNeural"  # Deep, emotional, confident male voice
+TTS_EDGE_RATE = "+0%"             # Natural spoken pace
+TTS_EDGE_PITCH = "-3Hz"           # Deep baritone resonance
 
-# Kokoro Local TTS (Fallback — 100% offline)
+# Offline Kokoro Fallback
 TTS_MODEL_PATH = MODELS_DIR / "kokoro-v1.0.int8.onnx"
 TTS_VOICES_PATH = MODELS_DIR / "voices-v1.0.bin"
 TTS_VOICE = "hybrid_baritone"      # Options: "hybrid_baritone", "am_michael", "am_echo", "am_onyx"
-TTS_SPEED = 1.15
-TTS_SENTENCE_PAUSE = 0.12
-TTS_CLAUSE_PAUSE = 0.06
-
+TTS_SPEED = 1.15                  # 1.15x = confident, conversational cadence
+TTS_SENTENCE_PAUSE = 0.12         # Snappy breath between sentences
+TTS_CLAUSE_PAUSE = 0.06           # Crisp comma transitions
 TTS_SAMPLE_RATE = 24000           # 24 kHz audio output
 TTS_REVERB_TAIL_MS = 250          # Silence tail (ms) before unmuting mic after speech
