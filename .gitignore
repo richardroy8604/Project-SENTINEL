@@ -28,6 +28,11 @@ logs/*
 *.mp4
 *.avi
 
+# Secrets & Environment
+.env
+.env.*
+local_config.py
+
 # IDE & OS
 .vscode/
 .idea/

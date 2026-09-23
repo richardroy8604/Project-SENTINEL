@@ -10,8 +10,7 @@ Supports bearer authorization, cached health checks, and graceful fallbacks.
 
 import json
 import time
-import urllib.request
-import urllib.error
+import requests
 
 import config
 
@@ -38,13 +37,17 @@ class LLMClient:
         self.api_key = api_key.strip()
         self.timeout = timeout
         self._endpoint = f"{self.api_url}/chat/completions"
+        self._session = requests.Session()
 
         # Cached availability state
         self._is_online = False
         self._last_check = 0.0
 
     def _get_headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "ULTRON-Security/1.0 (Windows NT 10.0; Win64; x64)",
+        }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
@@ -63,13 +66,15 @@ class LLMClient:
             return False
 
         try:
-            url = f"{self.api_url}/models"
-            req = urllib.request.Request(url, headers=self._get_headers(), method="GET")
-            with urllib.request.urlopen(req, timeout=2.5) as resp:
-                self._is_online = (resp.status == 200)
-                return self._is_online
+            resp = self._session.get(
+                f"{self.api_url}/models",
+                headers=self._get_headers(),
+                timeout=3.0,
+            )
+            self._is_online = (resp.status_code == 200)
+            return self._is_online
         except Exception:
-            # If /models is forbidden or blocked, try a quick ping on chat/completions endpoint
+            # If /models endpoint is restricted or timeout, verify if key exists
             if self.api_key:
                 self._is_online = True
                 return True
@@ -97,12 +102,13 @@ class LLMClient:
 
         # If Groq is selected but no key is provided, alert and use fallback
         if config.LLM_PROVIDER == "groq" and not self.api_key:
-            print("[ULTRON Brain] NOTICE: GROQ_API_KEY is not set. Add your free key in config.py!")
+            print("[ULTRON Brain] NOTICE: GROQ_API_KEY is not set. Add your key in .env or config.py!")
             fallback = self._get_offline_fallback(messages)
             latency = (time.perf_counter() - start) * 1000
             return fallback, latency
 
         if not self.is_available():
+            print("[ULTRON Brain] Provider unavailable, using offline response")
             fallback = self._get_offline_fallback(messages)
             latency = (time.perf_counter() - start) * 1000
             return fallback, latency
@@ -115,36 +121,27 @@ class LLMClient:
             "stream": False,
         }
 
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            self._endpoint,
-            data=data,
-            headers=self._get_headers(),
-            method="POST",
-        )
-
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            response = self._session.post(
+                self._endpoint,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=self.timeout,
+            )
+
+            if response.status_code == 200:
+                body = response.json()
                 choices = body.get("choices", [])
                 if choices:
                     reply = choices[0].get("message", {}).get("content", "").strip()
                     reply = self._clean_reply(reply)
                     latency = (time.perf_counter() - start) * 1000
                     return reply, latency
+            else:
+                print(f"[ULTRON Brain] API HTTP Error {response.status_code}: {response.text}")
 
-        except urllib.error.HTTPError as e:
-            err_body = ""
-            try:
-                err_body = e.read().decode("utf-8")
-            except Exception:
-                pass
-            print(f"[ULTRON Brain] API HTTP Error {e.code}: {e.reason} - {err_body}")
-        except urllib.error.URLError as e:
-            self._is_online = False
-            print(f"[ULTRON Brain] Connection failed: {e}")
         except Exception as e:
-            print(f"[ULTRON Brain] Error during generation: {e}")
+            print(f"[ULTRON Brain] Connection error during generation: {e}")
 
         fallback = self._get_offline_fallback(messages)
         latency = (time.perf_counter() - start) * 1000

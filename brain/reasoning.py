@@ -49,7 +49,8 @@ class ReasoningEngine:
     def start(self):
         """Check LLM status at startup."""
         available = self.client.is_available()
-        status_msg = "ONLINE (Ollama / local server detected)" if available else "STANDBY (Waiting for local server or using fallback)"
+        provider_name = "Groq Cloud LPU" if config.LLM_PROVIDER == "groq" else "Local Ollama"
+        status_msg = f"ONLINE ({provider_name})" if available else "STANDBY (Using fallback)"
         print(f"[ULTRON Brain] Reasoning Engine active -- Model: {self.client.model} -- {status_msg}")
 
     def _on_speech_recognized(self, event: Event):

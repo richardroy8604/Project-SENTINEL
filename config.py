@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 # =============================================================================
-# PATHS
+# PATHS & ENVIRONMENT
 # =============================================================================
 PROJECT_ROOT = Path(__file__).parent.resolve()
 MODELS_DIR = PROJECT_ROOT / "models"
@@ -18,6 +18,22 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 # Create directories if they don't exist
 MODELS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
+
+# Auto-load .env file if present
+_env_file = PROJECT_ROOT / ".env"
+if _env_file.exists():
+    try:
+        with open(_env_file, "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _k, _v = _line.split("=", 1)
+                    _k = _k.strip()
+                    _v = _v.strip().strip("'\"")
+                    if _k and _k not in os.environ:
+                        os.environ[_k] = _v
+    except Exception as _e:
+        print(f"[ULTRON Config] Warning: Failed to load .env: {_e}")
 
 # =============================================================================
 # CAMERA / VISION
@@ -103,10 +119,10 @@ STT_LOG_PROB_THRESHOLD = -0.80    # Discard low-confidence mumbled audio
 # Provider selection: "groq" (ultra-fast 300 t/s LPU) or "local" (Ollama / llama-server)
 LLM_PROVIDER = "groq"
 
-# Groq Cloud Configuration (100% Free, runs massive 70B models at ~300 tokens/sec)
+# Groq Cloud Configuration (Free, ultra-fast 27B model at ~300 tokens/sec)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_API_URL = "https://api.groq.com/openai/v1"
-GROQ_MODEL = "llama-3.3-70b-versatile"  # Best conversational model for Ultron persona
+GROQ_MODEL = "qwen/qwen3.8-27b"  # Fast, conversational, razor-sharp wit
 
 # Local Ollama / llama-server Configuration
 LOCAL_LLM_API_URL = "http://localhost:11434/v1"
