@@ -100,6 +100,20 @@ class ReasoningEngine:
         ).start()
         return True
 
+    def generate_departure_persuasion(self, track_id: int, level: int = 1):
+        """Generate an escalating remark to convince a silent loiterer to leave."""
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+
+        threading.Thread(
+            target=self._persuasion_worker,
+            args=(track_id, level),
+            daemon=True,
+        ).start()
+        return True
+
     def _greeting_worker(self, track_id: int):
         """Worker thread for autonomous greetings."""
         try:
@@ -181,6 +195,69 @@ class ReasoningEngine:
 
         except Exception as e:
             print(f"[ULTRON Brain] Error generating silence remark: {e}")
+        finally:
+            with self._lock:
+                self._busy = False
+
+    def _persuasion_worker(self, track_id: int, level: int):
+        """Worker thread formulating escalating departure persuasion in ULTRON persona."""
+        try:
+            situation = self.context.get_situation_summary()
+            messages = [{"role": "system", "content": self._system_prompt}]
+
+            for entry in self.context.conversation_history[-4:]:
+                role = "user" if entry["role"] == "human" else "assistant"
+                messages.append({"role": role, "content": entry["text"]})
+
+            if level == 1:
+                intensity = (
+                    "They have stood quietly for a full minute after your greeting without replying. "
+                    "Make a dry, witty observation that they are still lingering without saying anything, "
+                    "and casually suggest they move along or find somewhere else to be."
+                )
+            elif level == 2:
+                intensity = (
+                    "They have continued lingering silently for another minute. "
+                    "Be more pointed in your deterrence. Remind them this isn't an exhibition or waiting room, "
+                    "and standing silently in front of a private security camera accomplishes nothing."
+                )
+            else:
+                intensity = (
+                    f"They have persisted lingering silently for {level} minutes despite prior reminders. "
+                    "Deliver a quiet, intimidating, authoritative deterrence remark. Hint that continued loitering "
+                    "is entering official log territory and walking away now is by far the least complicated option."
+                )
+
+            persuasion_prompt = (
+                f"{situation}\n\n"
+                f"[EVENT: Person ID:{track_id} has been lingering in front of your camera for another minute without responding.]\n"
+                f"{intensity}\n"
+                f"RULES: Keep it to 1-2 punchy sentences. Speak strictly in ULTRON's calm, confident, dryly unsettling persona. "
+                f"Do NOT recite numbers of seconds. Frame your response to convincingly urge them to leave."
+            )
+            messages.append({"role": "user", "content": persuasion_prompt})
+
+            print(f"[ULTRON Brain] Generating departure persuasion (Level {level}) for Person ID:{track_id}...")
+            reply, latency_ms = self.client.chat(messages)
+
+            if reply:
+                print(f"[ULTRON Brain] Persuasion ({latency_ms:.0f}ms): \"{reply}\"")
+                self.context.add_conversation("ultron", reply)
+                self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
+                    "text": reply,
+                    "latency_ms": latency_ms,
+                    "timestamp": time.time(),
+                    "autonomous": True,
+                    "persuasion_level": level,
+                })
+                if self.on_reply is not None:
+                    try:
+                        self.on_reply(reply)
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            print(f"[ULTRON Brain] Error generating departure persuasion: {e}")
         finally:
             with self._lock:
                 self._busy = False

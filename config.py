@@ -170,7 +170,8 @@ TTS_REVERB_TAIL_MS = 250          # Silence tail (ms) before unmuting mic after 
 # CONVERSATION FLOW & AUTONOMOUS GREETINGS (Stage 7)
 # =============================================================================
 AUTONOMOUS_GREETINGS = True        # Greet new visitors autonomously on entry
-GREETING_DELAY_S = 1.5             # Wait 1.5s to confirm stable presence before greeting
+GREETING_DELAY_S = 0.8             # Wait 0.8s to confirm visitor before greeting
 GREETING_COOLDOWN_S = 60.0         # Cooldown before re-greeting the same track ID
-SILENCE_REENGAGE_ENABLED = True    # Make deadpan observation if visitor stands silently
-SILENCE_REENGAGE_TIMEOUT_S = 22.0  # Seconds of silence before remarking on lingering
+PERSON_LOST_GRACE_S = 1.5          # Grace period (seconds) before considering a lost track departed
+PERSUASION_ENABLED = True          # Prompt silent visitors to leave every minute
+PERSUASION_INTERVAL_S = 60.0       # Re-engage every 60s with escalating departure persuasion

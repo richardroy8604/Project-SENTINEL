@@ -7,13 +7,14 @@ robotic or repeating greetings on camera flickers.
 
 Key Responsibilities:
   1. Proactive Greeting: Initiates a calm, witty opening remark when a visitor
-     enters view and stays for >= 1.5 seconds.
+     enters view and stays for >= 0.8 seconds.
   2. Cooldown Enforcement: Enforces a 60s cooldown per track ID so visitors
      aren't repeatedly greeted.
-  3. Silence Re-engagement: If a visitor stands silently for > 22 seconds without
-     speaking, delivers a deadpan observation breaking the silence (at most once).
-  4. Half-Duplex Arbitration: Suppresses autonomous initiations while ULTRON is
-     actively speaking or while the user is talking.
+  3. Escalating Departure Persuasion: If a person is greeted and does not respond,
+     ULTRON re-engages every minute (~60s) with escalating, dry, intimidating remarks
+     aimed at convincing them to leave, continuing until they depart.
+  4. Non-Blocking Half-Duplex Arbitration: Time-windowed speech detection prevents
+     deadlocks from background noise or microphone pops.
 """
 
 import threading
@@ -51,12 +52,13 @@ class ConversationController:
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
 
-        # Cooldown & interaction tracking
+        # Cooldown & timing trackers
         self._last_greeting_time_by_id: dict[int, float] = {}
-        self._last_global_interaction_time: float = time.time()
+        self._last_persuasion_time_by_id: dict[int, float] = {}
+        self._last_ultron_speech_time: float = 0.0
+        self._last_speech_detected_time: float = 0.0
+        self._last_user_speech_time: float = 0.0
         self._is_speaking: bool = False
-        self._is_user_talking: bool = False
-        self._last_user_speech_end: float = 0.0
 
         # Subscriptions
         self.event_bus.subscribe(EventTypes.SPEAKING_STARTED, self._on_speaking_started)
@@ -72,14 +74,14 @@ class ConversationController:
             return
 
         self._running = True
-        self._last_global_interaction_time = time.time()
+        self._last_ultron_speech_time = 0.0
         self._thread = threading.Thread(
             target=self._monitor_loop,
             name="UltronConversationController",
             daemon=True,
         )
         self._thread.start()
-        print("[ULTRON Conversation] Autonomous conversation flow active.")
+        print("[ULTRON Conversation] Autonomous conversation flow active (Greetings + Every-Minute Persuasion).")
 
     def stop(self):
         """Stop the conversation monitor."""
@@ -93,31 +95,50 @@ class ConversationController:
     def _on_speaking_started(self, event: Event):
         with self._lock:
             self._is_speaking = True
-            self._last_global_interaction_time = time.time()
+            self._last_ultron_speech_time = time.time()
 
     def _on_speaking_finished(self, event: Event):
         with self._lock:
             self._is_speaking = False
-            self._last_global_interaction_time = time.time()
+            self._last_ultron_speech_time = time.time()
 
     def _on_speech_detected(self, event: Event):
+        # Time-windowed speech detection (self-expires in 3.0s to avoid deadlock on noise)
         with self._lock:
-            self._is_user_talking = True
+            self._last_speech_detected_time = time.time()
 
     def _on_speech_recognized(self, event: Event):
         with self._lock:
-            self._is_user_talking = False
-            self._last_user_speech_end = time.time()
-            self._last_global_interaction_time = time.time()
+            now = time.time()
+            self._last_speech_detected_time = 0.0
+            self._last_user_speech_time = now
+            # User spoke! Reset persuasion timers for all currently present visitors
+            for tid in list(self._last_persuasion_time_by_id.keys()):
+                self._last_persuasion_time_by_id[tid] = now
 
     def _on_person_entered(self, event: Event):
         track_id = event.data.get("track_id", -1)
-        # Note: We do NOT immediately fire greeting on enter; we wait GREETING_DELAY_S (1.5s)
-        # in the monitor loop to confirm stable presence.
+        if track_id >= 0:
+            with self._lock:
+                # Initialize timing for newly entered person
+                if track_id not in self._last_persuasion_time_by_id:
+                    self._last_persuasion_time_by_id[track_id] = time.time()
 
     def _on_person_left(self, event: Event):
         track_id = event.data.get("track_id", -1)
-        # Retain greeting timestamp in cooldown dict so immediate re-entry doesn't re-greet
+        with self._lock:
+            # Clean up persuasion timer for person who left
+            self._last_persuasion_time_by_id.pop(track_id, None)
+
+    # ── Half-Duplex State Checks ────────────────────────────────────
+
+    def _is_user_actively_talking(self) -> bool:
+        """Returns True if VAD detected voice in the last 3.0 seconds."""
+        return (time.time() - self._last_speech_detected_time) < 3.0
+
+    def _is_user_recently_spoke(self) -> bool:
+        """Returns True if user transcribed speech finished less than 2.0s ago."""
+        return (time.time() - self._last_user_speech_time) < 2.0
 
     # ── Monitor Loop ────────────────────────────────────────────────
 
@@ -125,59 +146,80 @@ class ConversationController:
         """Continuous background monitor evaluating conversational triggers."""
         while self._running:
             try:
-                time.sleep(0.4)
+                time.sleep(0.35)
 
                 if not self._running:
                     break
 
-                # Half-duplex check: do not initiate if ULTRON is speaking or user is talking
-                with self._lock:
-                    if self._is_speaking or self._is_user_talking:
-                        continue
-                    if (time.time() - self._last_user_speech_end) < 2.0:
-                        continue  # Wait 2 seconds after user finishes speaking before autonomous action
+                now = time.time()
 
+                # Half-duplex arbitration:
+                # 1. Don't initiate if ULTRON is currently speaking
+                if self._is_speaking:
+                    continue
+
+                # 2. Don't initiate if user is actively speaking or just finished
+                if self._is_user_actively_talking() or self._is_user_recently_spoke():
+                    continue
+
+                # 3. Don't initiate if brain is already processing an LLM call
                 if self.brain.is_busy:
                     continue
 
-                now = time.time()
                 persons = self.context.persons
-
                 if not persons:
                     continue
 
-                # 1. Check for autonomous greetings (new arrivals)
+                # ─────────────────────────────────────────────────────────────
+                # 1. Autonomous Greeting for New Arrivals
+                # ─────────────────────────────────────────────────────────────
                 if config.AUTONOMOUS_GREETINGS:
                     for person in persons:
                         if not person.greeting_given:
-                            # Confirm person has stayed long enough to establish stable presence
+                            # Confirm person has stayed long enough to establish presence (e.g. 0.8s)
                             if person.dwell_time >= config.GREETING_DELAY_S:
                                 last_greeted = self._last_greeting_time_by_id.get(person.track_id, 0.0)
-                                # Enforce per-person cooldown & minimum gap between any greetings
-                                if (now - last_greeted) >= config.GREETING_COOLDOWN_S and (now - self._last_global_interaction_time) >= 6.0:
-                                    # Mark greeted in context and record timestamp
+                                time_since_last_ultron = now - self._last_ultron_speech_time
+
+                                # Check cooldown and minimum gap after any prior speech
+                                if (now - last_greeted) >= config.GREETING_COOLDOWN_S and time_since_last_ultron >= 2.5:
+                                    # Mark greeted in context and update timestamps
                                     self.context.mark_greeting_given(person.track_id)
                                     with self._lock:
                                         self._last_greeting_time_by_id[person.track_id] = now
-                                        self._last_global_interaction_time = now
+                                        self._last_persuasion_time_by_id[person.track_id] = now
+                                        self._last_ultron_speech_time = now
 
                                     print(f"[ULTRON Conversation] Triggering greeting for Person ID:{person.track_id} (dwell: {person.dwell_time:.1f}s)")
                                     self.brain.generate_autonomous_greeting(person.track_id)
-                                    break  # Only trigger one greeting per loop iteration
+                                    break  # Only trigger one utterance per loop cycle
 
-                # 2. Check for silence re-engagement (lingering without speaking)
-                if config.SILENCE_REENGAGE_ENABLED:
+                # ─────────────────────────────────────────────────────────────
+                # 2. Every-Minute Departure Persuasion (if visitor doesn't respond)
+                # ─────────────────────────────────────────────────────────────
+                if getattr(config, "PERSUASION_ENABLED", True):
+                    persuasion_interval = getattr(config, "PERSUASION_INTERVAL_S", 60.0)
+
                     for person in persons:
-                        if person.greeting_given and not person.remark_given:
-                            silence_duration = now - self._last_global_interaction_time
-                            if person.dwell_time >= config.SILENCE_REENGAGE_TIMEOUT_S and silence_duration >= config.SILENCE_REENGAGE_TIMEOUT_S:
-                                self.context.mark_remark_given(person.track_id)
-                                with self._lock:
-                                    self._last_global_interaction_time = now
+                        # Only persuade persons who have already been greeted
+                        if person.greeting_given:
+                            last_persuaded = self._last_persuasion_time_by_id.get(person.track_id, person.first_seen)
+                            last_interaction = max(last_persuaded, self._last_user_speech_time, self._last_ultron_speech_time)
+                            silence_duration = now - last_interaction
 
-                                print(f"[ULTRON Conversation] Triggering silence re-engagement for Person ID:{person.track_id} (silence: {silence_duration:.1f}s)")
-                                self.brain.generate_presence_remark(person.track_id)
-                                break  # Only trigger one remark per loop iteration
+                            # If a full minute (~60s) has passed without response
+                            if silence_duration >= persuasion_interval:
+                                level = self.context.record_persuasion(person.track_id)
+                                with self._lock:
+                                    self._last_persuasion_time_by_id[person.track_id] = now
+                                    self._last_ultron_speech_time = now
+
+                                print(
+                                    f"[ULTRON Conversation] Person ID:{person.track_id} silent for {silence_duration:.0f}s. "
+                                    f"Delivering departure persuasion (Level {level})..."
+                                )
+                                self.brain.generate_departure_persuasion(person.track_id, level=level)
+                                break  # Only trigger one remark per loop cycle
 
             except Exception as e:
                 print(f"[ULTRON Conversation] Error in monitor loop: {e}")

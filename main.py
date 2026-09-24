@@ -169,8 +169,9 @@ def main():
     print("[ULTRON] System online. Close the window to exit.")
     print()
 
-    # Track person events to avoid duplicate event publishing
-    previously_seen_ids: set[int] = set()
+    # Track person presence with grace period to handle 1-2 frame camera drops
+    active_tracked_ids: set[int] = set()
+    tracked_last_seen: dict[int, float] = {}
 
     try:
         while True:
@@ -198,9 +199,15 @@ def main():
                 current_ids = {
                     p.track_id for p in result.persons if p.track_id >= 0
                 }
+                now_ts = time.time()
+
+                # Update last seen for all detected IDs
+                for tid in current_ids:
+                    tracked_last_seen[tid] = now_ts
 
                 # New persons entering
-                for tid in current_ids - previously_seen_ids:
+                for tid in current_ids - active_tracked_ids:
+                    active_tracked_ids.add(tid)
                     event_bus.publish(EventTypes.PERSON_ENTERED, {
                         "track_id": tid,
                     })
@@ -208,26 +215,30 @@ def main():
                         f"[VISION] Person ID:{tid} entered view."
                     )
 
-                # Persons leaving
-                for tid in previously_seen_ids - current_ids:
-                    # Calculate how long they were present
-                    person_ctx = None
-                    for p in context.persons:
-                        if p.track_id == tid:
-                            person_ctx = p
-                            break
-                    duration = (
-                        int(person_ctx.dwell_time) if person_ctx else 0
-                    )
-                    event_bus.publish(EventTypes.PERSON_LEFT, {
-                        "track_id": tid,
-                        "duration": duration,
-                    })
-                    dashboard.log_event(
-                        f"[VISION] Person ID:{tid} left view ({duration}s)."
-                    )
+                # Check for persons who truly left (not seen for >= PERSON_LOST_GRACE_S)
+                for tid in list(active_tracked_ids):
+                    if tid not in current_ids:
+                        last_seen_time = tracked_last_seen.get(tid, 0.0)
+                        if (now_ts - last_seen_time) >= config.PERSON_LOST_GRACE_S:
+                            active_tracked_ids.remove(tid)
+                            tracked_last_seen.pop(tid, None)
 
-                previously_seen_ids = current_ids
+                            # Calculate how long they were present
+                            person_ctx = None
+                            for p in context.persons:
+                                if p.track_id == tid:
+                                    person_ctx = p
+                                    break
+                            duration = (
+                                int(person_ctx.dwell_time) if person_ctx else 0
+                            )
+                            event_bus.publish(EventTypes.PERSON_LEFT, {
+                                "track_id": tid,
+                                "duration": duration,
+                            })
+                            dashboard.log_event(
+                                f"[VISION] Person ID:{tid} left view ({duration}s)."
+                            )
 
                 # Update context with current persons & holding phone state
                 for person in result.persons:
@@ -236,8 +247,8 @@ def main():
                             person.track_id, holding_phone=person.holding_phone
                         )
 
-                # Sync person count to state machine
-                state_machine.set_person_count(len(current_ids))
+                # Sync person count to state machine using active_tracked_ids
+                state_machine.set_person_count(len(active_tracked_ids))
 
             else:
                 display_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)

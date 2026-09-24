@@ -31,11 +31,13 @@ class PersonContext:
     greeting_given: bool = False
     remark_given: bool = False
     holding_phone: bool = False
+    persuasion_count: int = 0
+    last_persuasion_time: float = 0.0
 
     @property
     def dwell_time(self) -> float:
-        """How long this person has been present (seconds)."""
-        return self.last_seen - self.first_seen
+        """How long this person has been present in seconds (real-time clock)."""
+        return max(0.0, time.time() - self.first_seen)
 
 
 class ContextManager:
@@ -103,6 +105,16 @@ class ContextManager:
         with self._lock:
             if track_id in self._persons:
                 self._persons[track_id].remark_given = True
+
+    def record_persuasion(self, track_id: int) -> int:
+        """Record that a departure persuasion remark was made to this person, returning current level."""
+        with self._lock:
+            if track_id in self._persons:
+                p = self._persons[track_id]
+                p.persuasion_count += 1
+                p.last_persuasion_time = time.time()
+                return p.persuasion_count
+            return 1
 
     def get_ungreeted_persons(self) -> list[PersonContext]:
         """Get persons who haven't been greeted yet."""
@@ -174,7 +186,7 @@ class ContextManager:
                 remarked = "YES" if p.remark_given else "NO"
                 phone_tag = ", HOLDING PHONE / RECORDING: YES" if p.holding_phone else ""
                 lines.append(
-                    f"  Person ID:{p.track_id} — duration: {dwell_str}, greeted: {greeted}, lingering_remark_given: {remarked}{phone_tag}"
+                    f"  Person ID:{p.track_id} — duration: {dwell_str}, greeted: {greeted}, departure_prompts_given: {p.persuasion_count}{phone_tag}"
                 )
 
             if self._last_speech_text:

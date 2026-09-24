@@ -141,6 +141,8 @@ class PersonDetector:
                             track_id = int(boxes.id[i].cpu().numpy())
                         except Exception:
                             pass
+                    if track_id < 0:
+                        track_id = 1 + i  # Fallback valid track ID if tracker is initializing
 
                     cx = (x1 + x2) // 2
                     cy = (y1 + y2) // 2

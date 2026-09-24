@@ -103,10 +103,56 @@ def test_autonomous_greeting_and_cooldown():
     print("  Verifying cooldown suppresses duplicate greeting...")
     count_before = len(responses_received)
     controller.start()
-    time.sleep(1.5)
+    time.sleep(1.0)
     controller.stop()
     assert len(responses_received) == count_before, "Cooldown failed: duplicate greeting fired!"
     print("  [PASS] Cooldown successfully prevented duplicate greeting")
+
+
+def test_departure_persuasion():
+    print("\n--- Test 3: Every-Minute Escalating Departure Persuasion ---")
+    bus = EventBus()
+    ctx = ContextManager(bus)
+
+    responses_received = []
+
+    def on_response(event: Event):
+        responses_received.append(event.data)
+        print(f"  [PERSUASION RESPONSE] (Level {event.data.get('persuasion_level')}): \"{event.data.get('text')}\"")
+
+    bus.subscribe(EventTypes.RESPONSE_GENERATED, on_response)
+
+    brain = ReasoningEngine(bus, ctx)
+    brain.start()
+
+    controller = ConversationController(bus, ctx, brain)
+
+    # Simulate person who was already greeted
+    ctx.update_person(track_id=202)
+    ctx.mark_greeting_given(track_id=202)
+
+    # Set last persuasion time to 65 seconds ago (simulating 1 minute of silence)
+    controller._last_persuasion_time_by_id[202] = time.time() - 65.0
+    controller._last_ultron_speech_time = time.time() - 65.0
+
+    print("  Simulating 60s silence tick for departure persuasion (Level 1)...")
+    controller.start()
+
+    timeout = 10.0
+    start = time.time()
+    while not responses_received and (time.time() - start) < timeout:
+        time.sleep(0.5)
+
+    controller.stop()
+
+    assert len(responses_received) >= 1, "Departure persuasion remark was not generated!"
+    persuasion_text = responses_received[0].get("text", "")
+    level = responses_received[0].get("persuasion_level", 0)
+    print(f"  [PASS] Generated Level {level} persuasion: \"{persuasion_text}\"")
+
+    person = ctx._persons.get(202)
+    assert person is not None and person.persuasion_count >= 1, "Persuasion count was not recorded!"
+    print("  [PASS] PersonContext.persuasion_count incremented to 1")
 
 
 def main():
@@ -116,11 +162,13 @@ def main():
 
     test_context_dwell_formatting()
     test_autonomous_greeting_and_cooldown()
+    test_departure_persuasion()
 
     print("\n" + "=" * 60)
-    print("  ALL STAGE 7 CONVERSATION TESTS PASSED SUCCESSFULLY!")
+    print("  ALL STAGE 7 CONVERSATION & PERSUASION TESTS PASSED!")
     print("=" * 60)
 
 
 if __name__ == "__main__":
     main()
+
