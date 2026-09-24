@@ -21,6 +21,7 @@ from core.event_bus import EventBus, EventTypes
 from core.state_machine import StateMachine
 from core.context import ContextManager
 from core.conversation import ConversationController
+from core.identity import IdentityTracker
 from vision.camera import Camera
 from vision.detector import PersonDetector
 from audio.listener import AudioListener
@@ -169,7 +170,8 @@ def main():
     print("[ULTRON] System online. Close the window to exit.")
     print()
 
-    # Track person presence with grace period to handle 1-2 frame camera drops
+    # Identity tracker maintains stable canonical IDs across departures and returns
+    identity_tracker = IdentityTracker(reid_window_s=60.0)
     active_tracked_ids: set[int] = set()
     tracked_last_seen: dict[int, float] = {}
 
@@ -195,11 +197,17 @@ def main():
                     inference_ms=result.inference_ms,
                 )
 
-                # ── Publish enter/leave events via event bus ────────
+                now_ts = time.time()
+
+                # ── Map raw tracker IDs to persistent canonical IDs ──
+                for p in result.persons:
+                    if p.track_id >= 0:
+                        p.track_id = identity_tracker.resolve_track_id(p.track_id, now_ts)
+
                 current_ids = {
                     p.track_id for p in result.persons if p.track_id >= 0
                 }
-                now_ts = time.time()
+                identity_tracker.set_active_ids(current_ids)
 
                 # Update last seen for all detected IDs
                 for tid in current_ids:
@@ -222,6 +230,7 @@ def main():
                         if (now_ts - last_seen_time) >= config.PERSON_LOST_GRACE_S:
                             active_tracked_ids.remove(tid)
                             tracked_last_seen.pop(tid, None)
+                            identity_tracker.on_person_departed(tid, now_ts)
 
                             # Calculate how long they were present
                             person_ctx = None

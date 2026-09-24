@@ -125,12 +125,27 @@ class ReasoningEngine:
                 role = "user" if entry["role"] == "human" else "assistant"
                 messages.append({"role": role, "content": entry["text"]})
 
-            greeting_instruction = (
-                f"{situation}\n\n"
-                f"[EVENT: Person ID:{track_id} just stepped into view and stopped in front of you.]\n"
-                f"Deliver a sharp, in-character opening greeting or dry observation. Keep it to 1 sentence, calm, confident, and direct. "
-                f"Do NOT quote exact seconds or dwell time. Use a varied opener (such as 'Smile, you're on camera', 'You walked into my field of view. It seemed rude not to say hello', or a dry situational remark)."
-            )
+            person_ctx = None
+            for p in self.context.persons:
+                if p.track_id == track_id:
+                    person_ctx = p
+                    break
+
+            if person_ctx and person_ctx.is_reentry:
+                greeting_instruction = (
+                    f"{situation}\n\n"
+                    f"[EVENT: Person ID:{track_id} has returned after stepping away momentarily.]\n"
+                    f"Acknowledge their return naturally with dry Ultron wit (1 sentence max, e.g. 'Back already?', 'You didn't stay away long'). "
+                    f"Do NOT greet them like a stranger and do NOT say 'another one arrived' or act surprised."
+                )
+            else:
+                greeting_instruction = (
+                    f"{situation}\n\n"
+                    f"[EVENT: Person ID:{track_id} just stepped into view and stopped in front of you.]\n"
+                    f"Deliver a sharp, in-character opening greeting or dry observation. Keep it to 1 sentence, calm, confident, and direct. "
+                    f"Do NOT quote exact seconds or dwell time. Use a varied opener (such as 'Smile, you're on camera', 'You walked into my field of view. It seemed rude not to say hello', or a dry situational remark). "
+                    f"If there is only 1 person present, do NOT say 'another one arrived' or assume anyone else is there."
+                )
             messages.append({"role": "user", "content": greeting_instruction})
 
             print(f"[ULTRON Brain] Generating autonomous greeting for Person ID:{track_id}...")

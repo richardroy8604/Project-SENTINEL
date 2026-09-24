@@ -33,6 +33,7 @@ class PersonContext:
     holding_phone: bool = False
     persuasion_count: int = 0
     last_persuasion_time: float = 0.0
+    is_reentry: bool = False
 
     @property
     def dwell_time(self) -> float:
@@ -60,6 +61,7 @@ class ContextManager:
 
         # Person tracking
         self._persons: dict[int, PersonContext] = {}
+        self._departed_persons: dict[int, PersonContext] = {}
 
         # Conversation
         self._conversation_history: list[dict[str, str]] = []
@@ -89,6 +91,13 @@ class ContextManager:
             if track_id in self._persons:
                 self._persons[track_id].last_seen = time.time()
                 self._persons[track_id].holding_phone = holding_phone
+            elif track_id in self._departed_persons:
+                # Returning visitor: restore their context & greeting status
+                p = self._departed_persons.pop(track_id)
+                p.last_seen = time.time()
+                p.holding_phone = holding_phone
+                p.is_reentry = True
+                self._persons[track_id] = p
             else:
                 self._persons[track_id] = PersonContext(
                     track_id=track_id, holding_phone=holding_phone
@@ -179,11 +188,17 @@ class ContextManager:
             if self._security_reason:
                 lines.append(f"State reason: {self._security_reason}")
 
-            lines.append(f"Persons detected: {len(self._persons)}")
+            num_persons = len(self._persons)
+            lines.append(f"Persons detected: {num_persons}")
+            if num_persons == 1:
+                lines.append("Note: Only 1 person is present in front of the camera (do NOT say 'another one arrived' or assume a group).")
+
             for p in self._persons.values():
-                dwell_str = _qualitative_dwell(p.dwell_time)
+                if p.is_reentry:
+                    dwell_str = "returned after stepping away momentarily"
+                else:
+                    dwell_str = _qualitative_dwell(p.dwell_time)
                 greeted = "YES" if p.greeting_given else "NO"
-                remarked = "YES" if p.remark_given else "NO"
                 phone_tag = ", HOLDING PHONE / RECORDING: YES" if p.holding_phone else ""
                 lines.append(
                     f"  Person ID:{p.track_id} — duration: {dwell_str}, greeted: {greeted}, departure_prompts_given: {p.persuasion_count}{phone_tag}"
@@ -213,13 +228,21 @@ class ContextManager:
         track_id = event.data.get("track_id", -1)
         if track_id >= 0:
             with self._lock:
-                if track_id not in self._persons:
+                if track_id in self._departed_persons:
+                    p = self._departed_persons.pop(track_id)
+                    p.last_seen = time.time()
+                    p.is_reentry = True
+                    self._persons[track_id] = p
+                elif track_id not in self._persons:
                     self._persons[track_id] = PersonContext(track_id=track_id)
 
     def _on_person_left(self, event: Event):
         track_id = event.data.get("track_id", -1)
         with self._lock:
-            self._persons.pop(track_id, None)
+            if track_id in self._persons:
+                p = self._persons.pop(track_id)
+                p.last_seen = time.time()
+                self._departed_persons[track_id] = p
 
     def _on_state_changed(self, event: Event):
         with self._lock:

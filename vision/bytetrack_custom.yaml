@@ -1,0 +1,11 @@
+# ULTRON Custom ByteTrack Configuration
+# Extends track buffer to 120 frames (~4 seconds at 30 FPS) to prevent ID switching
+# when a person briefly turns around or steps to the edge of the camera view.
+
+tracker_type: bytetrack
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+track_buffer: 120
+match_thresh: 0.8
+fuse_score: True

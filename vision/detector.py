@@ -15,10 +15,13 @@ The detector:
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 import numpy as np
 import cv2
 
 import config
+
+TRACKER_CONFIG = str(Path(__file__).parent / "bytetrack_custom.yaml")
 
 
 @dataclass
@@ -113,7 +116,7 @@ class PersonDetector:
             conf=self.confidence,
             device=self.device,
             persist=True,
-            tracker="bytetrack.yaml",
+            tracker=TRACKER_CONFIG,
             verbose=False,
         )
 
