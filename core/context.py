@@ -29,6 +29,7 @@ class PersonContext:
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
     greeting_given: bool = False
+    remark_given: bool = False
     holding_phone: bool = False
 
     @property
@@ -97,6 +98,12 @@ class ContextManager:
             if track_id in self._persons:
                 self._persons[track_id].greeting_given = True
 
+    def mark_remark_given(self, track_id: int):
+        """Mark that ULTRON has delivered a presence/silence remark to this person."""
+        with self._lock:
+            if track_id in self._persons:
+                self._persons[track_id].remark_given = True
+
     def get_ungreeted_persons(self) -> list[PersonContext]:
         """Get persons who haven't been greeted yet."""
         with self._lock:
@@ -141,6 +148,18 @@ class ContextManager:
         Assemble a structured text summary of the current situation.
         This gets injected into the LLM prompt as context.
         """
+        def _qualitative_dwell(seconds: float) -> str:
+            if seconds < 15:
+                return "just arrived"
+            elif seconds < 45:
+                return "here for half a minute"
+            elif seconds < 90:
+                return "present for about a minute"
+            elif seconds < 180:
+                return "lingering for a couple of minutes"
+            else:
+                return "lingering for several minutes"
+
         with self._lock:
             lines = ["[CURRENT SITUATION]"]
             lines.append(f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -150,11 +169,12 @@ class ContextManager:
 
             lines.append(f"Persons detected: {len(self._persons)}")
             for p in self._persons.values():
-                dwell = int(p.dwell_time)
+                dwell_str = _qualitative_dwell(p.dwell_time)
                 greeted = "YES" if p.greeting_given else "NO"
+                remarked = "YES" if p.remark_given else "NO"
                 phone_tag = ", HOLDING PHONE / RECORDING: YES" if p.holding_phone else ""
                 lines.append(
-                    f"  Person ID:{p.track_id} — present {dwell}s, greeted: {greeted}{phone_tag}"
+                    f"  Person ID:{p.track_id} — duration: {dwell_str}, greeted: {greeted}, lingering_remark_given: {remarked}{phone_tag}"
                 )
 
             if self._last_speech_text:
@@ -162,7 +182,8 @@ class ContextManager:
                 whisper_tag = " (WHISPERED)" if self._is_whisper else ""
                 lines.append(f"Speech type: normal{whisper_tag}")
                 ago = int(time.time() - self._last_speech_time)
-                lines.append(f"Speech was {ago}s ago")
+                ago_str = "just now" if ago < 10 else "a moment ago" if ago < 60 else "a few minutes ago"
+                lines.append(f"Speech timing: {ago_str}")
 
             # Recent conversation
             recent = self._conversation_history[-4:]  # Last 4 exchanges

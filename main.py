@@ -20,6 +20,7 @@ from setup_models import ensure_vad_model, ensure_tts_models
 from core.event_bus import EventBus, EventTypes
 from core.state_machine import StateMachine
 from core.context import ContextManager
+from core.conversation import ConversationController
 from vision.camera import Camera
 from vision.detector import PersonDetector
 from audio.listener import AudioListener
@@ -95,6 +96,15 @@ def main():
     )
     brain.start()
 
+    # ── Initialize Autonomous Conversation Controller ──────────────
+    print("[ULTRON] Initializing autonomous conversation flow...")
+    conversation = ConversationController(
+        event_bus=event_bus,
+        context=context,
+        brain=brain,
+    )
+    conversation.start()
+
     # Wire dashboard to event bus for logging and state visualization
     def on_state_changed(event):
         old = event.data.get("old_state", "?")
@@ -152,6 +162,7 @@ def main():
         else:
             v_name = config.TTS_VOICE
         dashboard.log_event(f"[ULTRON] Voice: {v_name} ({config.TTS_PROVIDER.upper()})")
+    dashboard.log_event("[ULTRON] Flow: Autonomous greeting & re-engagement active")
     dashboard.log_event("[ULTRON] Monitoring...")
 
     # ── Main Loop ───────────────────────────────────────────────────
@@ -244,6 +255,8 @@ def main():
 
     finally:
         print("[ULTRON] Shutting down...")
+        if conversation:
+            conversation.stop()
         if voice_playback:
             voice_playback.stop()
         if audio_listener:

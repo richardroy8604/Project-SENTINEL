@@ -165,3 +165,12 @@ TTS_SENTENCE_PAUSE = 0.12         # Snappy breath between sentences
 TTS_CLAUSE_PAUSE = 0.06           # Crisp comma transitions
 TTS_SAMPLE_RATE = 24000           # 24 kHz audio output
 TTS_REVERB_TAIL_MS = 250          # Silence tail (ms) before unmuting mic after speech
+
+# =============================================================================
+# CONVERSATION FLOW & AUTONOMOUS GREETINGS (Stage 7)
+# =============================================================================
+AUTONOMOUS_GREETINGS = True        # Greet new visitors autonomously on entry
+GREETING_DELAY_S = 1.5             # Wait 1.5s to confirm stable presence before greeting
+GREETING_COOLDOWN_S = 60.0         # Cooldown before re-greeting the same track ID
+SILENCE_REENGAGE_ENABLED = True    # Make deadpan observation if visitor stands silently
+SILENCE_REENGAGE_TIMEOUT_S = 22.0  # Seconds of silence before remarking on lingering

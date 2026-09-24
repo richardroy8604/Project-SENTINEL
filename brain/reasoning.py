@@ -46,6 +46,12 @@ class ReasoningEngine:
             EventTypes.SPEECH_RECOGNIZED, self._on_speech_recognized
         )
 
+    @property
+    def is_busy(self) -> bool:
+        """True if the reasoning engine is currently processing an LLM prompt."""
+        with self._lock:
+            return self._busy
+
     def start(self):
         """Check LLM status at startup."""
         available = self.client.is_available()
@@ -65,6 +71,119 @@ class ReasoningEngine:
             args=(text, event.data.get("is_whisper", False)),
             daemon=True,
         ).start()
+
+    def generate_autonomous_greeting(self, track_id: int):
+        """Generate an autonomous opening greeting for a newly arrived visitor."""
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+
+        threading.Thread(
+            target=self._greeting_worker,
+            args=(track_id,),
+            daemon=True,
+        ).start()
+        return True
+
+    def generate_presence_remark(self, track_id: int):
+        """Generate a deadpan observation when a visitor stands silently without speaking."""
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+
+        threading.Thread(
+            target=self._presence_remark_worker,
+            args=(track_id,),
+            daemon=True,
+        ).start()
+        return True
+
+    def _greeting_worker(self, track_id: int):
+        """Worker thread for autonomous greetings."""
+        try:
+            situation = self.context.get_situation_summary()
+            messages = [{"role": "system", "content": self._system_prompt}]
+
+            # Add recent context
+            for entry in self.context.conversation_history[-2:]:
+                role = "user" if entry["role"] == "human" else "assistant"
+                messages.append({"role": role, "content": entry["text"]})
+
+            greeting_instruction = (
+                f"{situation}\n\n"
+                f"[EVENT: Person ID:{track_id} just stepped into view and stopped in front of you.]\n"
+                f"Deliver a sharp, in-character opening greeting or dry observation. Keep it to 1 sentence, calm, confident, and direct. "
+                f"Do NOT quote exact seconds or dwell time. Use a varied opener (such as 'Smile, you're on camera', 'You walked into my field of view. It seemed rude not to say hello', or a dry situational remark)."
+            )
+            messages.append({"role": "user", "content": greeting_instruction})
+
+            print(f"[ULTRON Brain] Generating autonomous greeting for Person ID:{track_id}...")
+            reply, latency_ms = self.client.chat(messages)
+
+            if reply:
+                print(f"[ULTRON Brain] Greeting ({latency_ms:.0f}ms): \"{reply}\"")
+                self.context.add_conversation("ultron", reply)
+                self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
+                    "text": reply,
+                    "latency_ms": latency_ms,
+                    "timestamp": time.time(),
+                    "autonomous": True,
+                })
+                if self.on_reply is not None:
+                    try:
+                        self.on_reply(reply)
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            print(f"[ULTRON Brain] Error generating autonomous greeting: {e}")
+        finally:
+            with self._lock:
+                self._busy = False
+
+    def _presence_remark_worker(self, track_id: int):
+        """Worker thread for breaking silence when a visitor lingers quietly."""
+        try:
+            situation = self.context.get_situation_summary()
+            messages = [{"role": "system", "content": self._system_prompt}]
+
+            for entry in self.context.conversation_history[-4:]:
+                role = "user" if entry["role"] == "human" else "assistant"
+                messages.append({"role": role, "content": entry["text"]})
+
+            remark_instruction = (
+                f"{situation}\n\n"
+                f"[EVENT: Person ID:{track_id} has been lingering quietly for a while without saying anything.]\n"
+                f"Deliver a deadpan, observant 1-sentence remark breaking the silence. "
+                f"Do NOT quote exact seconds. Say 'a minute' or 'a couple of minutes' if referencing time at all."
+            )
+            messages.append({"role": "user", "content": remark_instruction})
+
+            print(f"[ULTRON Brain] Generating silence remark for Person ID:{track_id}...")
+            reply, latency_ms = self.client.chat(messages)
+
+            if reply:
+                print(f"[ULTRON Brain] Remark ({latency_ms:.0f}ms): \"{reply}\"")
+                self.context.add_conversation("ultron", reply)
+                self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
+                    "text": reply,
+                    "latency_ms": latency_ms,
+                    "timestamp": time.time(),
+                    "autonomous": True,
+                })
+                if self.on_reply is not None:
+                    try:
+                        self.on_reply(reply)
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            print(f"[ULTRON Brain] Error generating silence remark: {e}")
+        finally:
+            with self._lock:
+                self._busy = False
 
     def _generate_reply_worker(self, user_text: str, is_whisper: bool = False):
         """Worker thread that formats the context and queries the LLM."""
