@@ -9,6 +9,7 @@ Supports bearer authorization, cached health checks, and graceful fallbacks.
 """
 
 import json
+import threading
 import time
 import requests
 
@@ -38,6 +39,7 @@ class LLMClient:
         self.timeout = timeout
         self._endpoint = f"{self.api_url}/chat/completions"
         self._session = requests.Session()
+        self._lock = threading.Lock()
 
         # Cached availability state
         self._is_online = False
@@ -121,27 +123,35 @@ class LLMClient:
             "stream": False,
         }
 
-        try:
-            response = self._session.post(
-                self._endpoint,
-                headers=self._get_headers(),
-                json=payload,
-                timeout=self.timeout,
-            )
+        with self._lock:
+            for attempt in range(2):
+                try:
+                    response = self._session.post(
+                        self._endpoint,
+                        headers=self._get_headers(),
+                        json=payload,
+                        timeout=self.timeout,
+                    )
 
-            if response.status_code == 200:
-                body = response.json()
-                choices = body.get("choices", [])
-                if choices:
-                    reply = choices[0].get("message", {}).get("content", "").strip()
-                    reply = self._clean_reply(reply)
-                    latency = (time.perf_counter() - start) * 1000
-                    return reply, latency
-            else:
-                print(f"[ULTRON Brain] API HTTP Error {response.status_code}: {response.text}")
+                    if response.status_code == 200:
+                        body = response.json()
+                        choices = body.get("choices", [])
+                        if choices:
+                            reply = choices[0].get("message", {}).get("content", "").strip()
+                            reply = self._clean_reply(reply)
+                            latency = (time.perf_counter() - start) * 1000
+                            return reply, latency
+                    elif response.status_code == 429 and attempt == 0:
+                        print("[ULTRON Brain] Rate limit hit (429). Backing off 1.4s and retrying...")
+                        time.sleep(1.4)
+                        continue
+                    else:
+                        print(f"[ULTRON Brain] API HTTP Error {response.status_code}: {response.text}")
+                        break
 
-        except Exception as e:
-            print(f"[ULTRON Brain] Connection error during generation: {e}")
+                except Exception as e:
+                    print(f"[ULTRON Brain] Connection error during generation: {e}")
+                    break
 
         fallback = self._get_offline_fallback(messages)
         latency = (time.perf_counter() - start) * 1000

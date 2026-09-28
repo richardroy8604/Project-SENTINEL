@@ -40,6 +40,8 @@ class ReasoningEngine:
         self._system_prompt = build_system_prompt()
         self._busy = False
         self._lock = threading.Lock()
+        self._generation_id = 0
+        self._user_speech_pending = False
 
         # Subscribe to speech recognized event
         self.event_bus.subscribe(
@@ -65,23 +67,30 @@ class ReasoningEngine:
         if not text:
             return
 
+        with self._lock:
+            self._generation_id += 1
+            gen_id = self._generation_id
+            self._user_speech_pending = True
+
         # Run reasoning in a background thread to prevent blocking audio/camera threads
         threading.Thread(
             target=self._generate_reply_worker,
-            args=(text, event.data.get("is_whisper", False)),
+            args=(text, event.data.get("is_whisper", False), gen_id),
             daemon=True,
         ).start()
 
     def generate_autonomous_greeting(self, track_id: int):
         """Generate an autonomous opening greeting for a newly arrived visitor."""
         with self._lock:
-            if self._busy:
+            if self._busy or self._user_speech_pending:
                 return False
             self._busy = True
+            self._generation_id += 1
+            gen_id = self._generation_id
 
         threading.Thread(
             target=self._greeting_worker,
-            args=(track_id,),
+            args=(track_id, gen_id),
             daemon=True,
         ).start()
         return True
@@ -89,13 +98,15 @@ class ReasoningEngine:
     def generate_presence_remark(self, track_id: int):
         """Generate a deadpan observation when a visitor stands silently without speaking."""
         with self._lock:
-            if self._busy:
+            if self._busy or self._user_speech_pending:
                 return False
             self._busy = True
+            self._generation_id += 1
+            gen_id = self._generation_id
 
         threading.Thread(
             target=self._presence_remark_worker,
-            args=(track_id,),
+            args=(track_id, gen_id),
             daemon=True,
         ).start()
         return True
@@ -103,13 +114,15 @@ class ReasoningEngine:
     def generate_departure_persuasion(self, track_id: int, level: int = 1):
         """Generate an escalating remark to convince a silent loiterer to leave."""
         with self._lock:
-            if self._busy:
+            if self._busy or self._user_speech_pending:
                 return False
             self._busy = True
+            self._generation_id += 1
+            gen_id = self._generation_id
 
         threading.Thread(
             target=self._persuasion_worker,
-            args=(track_id, level),
+            args=(track_id, level, gen_id),
             daemon=True,
         ).start()
         return True
@@ -117,18 +130,20 @@ class ReasoningEngine:
     def generate_weapon_warning(self, track_id: int, weapon_type: str = "WEAPON"):
         """Generate an immediate, stern warning ordering an armed person to drop their weapon."""
         with self._lock:
-            if self._busy:
+            if self._busy or self._user_speech_pending:
                 return False
             self._busy = True
+            self._generation_id += 1
+            gen_id = self._generation_id
 
         threading.Thread(
             target=self._weapon_warning_worker,
-            args=(track_id, weapon_type),
+            args=(track_id, weapon_type, gen_id),
             daemon=True,
         ).start()
         return True
 
-    def _weapon_warning_worker(self, track_id: int, weapon_type: str):
+    def _weapon_warning_worker(self, track_id: int, weapon_type: str, gen_id: int):
         """Worker thread for authoritative weapon deterrence."""
         try:
             situation = self.context.get_situation_summary()
@@ -148,6 +163,11 @@ class ReasoningEngine:
 
             print(f"[ULTRON Brain] Generating weapon warning for Person ID:{track_id} ({weapon_type})...")
             reply, latency_ms = self.client.chat(messages)
+
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] Weapon warning preempted by user speech (discarding).")
+                    return
 
             if reply:
                 print(f"[ULTRON Brain] Weapon Warning ({latency_ms:.0f}ms): \"{reply}\"")
@@ -169,23 +189,26 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Error generating weapon warning: {e}")
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
 
     def generate_tamper_warning(self, obstruction_type: str = "LENS_COVERED"):
         """Generate an immediate response when camera tampering or obstruction is detected."""
         with self._lock:
-            if self._busy:
+            if self._busy or self._user_speech_pending:
                 return False
             self._busy = True
+            self._generation_id += 1
+            gen_id = self._generation_id
 
         threading.Thread(
             target=self._tamper_worker,
-            args=(obstruction_type,),
+            args=(obstruction_type, gen_id),
             daemon=True,
         ).start()
         return True
 
-    def _tamper_worker(self, obstruction_type: str):
+    def _tamper_worker(self, obstruction_type: str, gen_id: int):
         try:
             situation = self.context.get_situation_summary()
             messages = [{"role": "system", "content": self._system_prompt}]
@@ -206,6 +229,11 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Generating tamper response ({obstruction_type})...")
             reply, latency_ms = self.client.chat(messages)
 
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] Tamper warning preempted by user speech (discarding).")
+                    return
+
             if reply:
                 print(f"[ULTRON Brain] Tamper Remark ({latency_ms:.0f}ms): \"{reply}\"")
                 self.context.add_conversation("ultron", reply)
@@ -225,23 +253,26 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Error generating tamper warning: {e}")
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
 
     def generate_loitering_warning(self, track_id: int, duration_s: float = 90.0):
         """Generate a pointed response when someone triggers a loitering anomaly."""
         with self._lock:
-            if self._busy:
+            if self._busy or self._user_speech_pending:
                 return False
             self._busy = True
+            self._generation_id += 1
+            gen_id = self._generation_id
 
         threading.Thread(
             target=self._loiter_worker,
-            args=(track_id, duration_s),
+            args=(track_id, duration_s, gen_id),
             daemon=True,
         ).start()
         return True
 
-    def _loiter_worker(self, track_id: int, duration_s: float):
+    def _loiter_worker(self, track_id: int, duration_s: float, gen_id: int):
         try:
             situation = self.context.get_situation_summary()
             messages = [{"role": "system", "content": self._system_prompt}]
@@ -262,6 +293,11 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Generating loitering alert response for Person ID:{track_id}...")
             reply, latency_ms = self.client.chat(messages)
 
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] Loitering remark preempted by user speech (discarding).")
+                    return
+
             if reply:
                 print(f"[ULTRON Brain] Loitering Remark ({latency_ms:.0f}ms): \"{reply}\"")
                 self.context.add_conversation("ultron", reply)
@@ -281,23 +317,26 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Error generating loitering warning: {e}")
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
 
     def generate_whisper_warning(self, confidence: float = 0.8):
         """Generate a response when hushed / whispered speech is detected."""
         with self._lock:
-            if self._busy:
+            if self._busy or self._user_speech_pending:
                 return False
             self._busy = True
+            self._generation_id += 1
+            gen_id = self._generation_id
 
         threading.Thread(
             target=self._whisper_worker,
-            args=(confidence,),
+            args=(confidence, gen_id),
             daemon=True,
         ).start()
         return True
 
-    def _whisper_worker(self, confidence: float):
+    def _whisper_worker(self, confidence: float, gen_id: int):
         try:
             situation = self.context.get_situation_summary()
             messages = [{"role": "system", "content": self._system_prompt}]
@@ -316,6 +355,11 @@ class ReasoningEngine:
 
             print(f"[ULTRON Brain] Generating whisper reaction...")
             reply, latency_ms = self.client.chat(messages)
+
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] Whisper remark preempted by user speech (discarding).")
+                    return
 
             if reply:
                 print(f"[ULTRON Brain] Whisper Remark ({latency_ms:.0f}ms): \"{reply}\"")
@@ -336,23 +380,26 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Error generating whisper warning: {e}")
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
 
     def generate_suspicious_state_warning(self, reason: str):
         """Generate a response when the overall security state transitions to SUSPICIOUS."""
         with self._lock:
-            if self._busy:
+            if self._busy or self._user_speech_pending:
                 return False
             self._busy = True
+            self._generation_id += 1
+            gen_id = self._generation_id
 
         threading.Thread(
             target=self._suspicious_state_worker,
-            args=(reason,),
+            args=(reason, gen_id),
             daemon=True,
         ).start()
         return True
 
-    def _suspicious_state_worker(self, reason: str):
+    def _suspicious_state_worker(self, reason: str, gen_id: int):
         try:
             situation = self.context.get_situation_summary()
             messages = [{"role": "system", "content": self._system_prompt}]
@@ -371,6 +418,11 @@ class ReasoningEngine:
 
             print(f"[ULTRON Brain] Generating SUSPICIOUS state remark ({reason})...")
             reply, latency_ms = self.client.chat(messages)
+
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] Suspicious state remark preempted by user speech (discarding).")
+                    return
 
             if reply:
                 print(f"[ULTRON Brain] Suspicious Remark ({latency_ms:.0f}ms): \"{reply}\"")
@@ -391,9 +443,10 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Error generating suspicious state warning: {e}")
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
 
-    def _greeting_worker(self, track_id: int):
+    def _greeting_worker(self, track_id: int, gen_id: int):
         """Worker thread for autonomous greetings."""
         try:
             situation = self.context.get_situation_summary()
@@ -430,6 +483,11 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Generating autonomous greeting for Person ID:{track_id}...")
             reply, latency_ms = self.client.chat(messages)
 
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] Autonomous greeting preempted by user speech (discarding).")
+                    return
+
             if reply:
                 print(f"[ULTRON Brain] Greeting ({latency_ms:.0f}ms): \"{reply}\"")
                 self.context.add_conversation("ultron", reply)
@@ -449,9 +507,10 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Error generating autonomous greeting: {e}")
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
 
-    def _presence_remark_worker(self, track_id: int):
+    def _presence_remark_worker(self, track_id: int, gen_id: int):
         """Worker thread for breaking silence when a visitor lingers quietly."""
         try:
             situation = self.context.get_situation_summary()
@@ -472,6 +531,11 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Generating silence remark for Person ID:{track_id}...")
             reply, latency_ms = self.client.chat(messages)
 
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] Silence remark preempted by user speech (discarding).")
+                    return
+
             if reply:
                 print(f"[ULTRON Brain] Remark ({latency_ms:.0f}ms): \"{reply}\"")
                 self.context.add_conversation("ultron", reply)
@@ -491,9 +555,10 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Error generating silence remark: {e}")
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
 
-    def _persuasion_worker(self, track_id: int, level: int):
+    def _persuasion_worker(self, track_id: int, level: int, gen_id: int):
         """Worker thread formulating escalating departure persuasion in ULTRON persona."""
         try:
             situation = self.context.get_situation_summary()
@@ -534,6 +599,11 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Generating departure persuasion (Level {level}) for Person ID:{track_id}...")
             reply, latency_ms = self.client.chat(messages)
 
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] Persuasion remark preempted by user speech (discarding).")
+                    return
+
             if reply:
                 print(f"[ULTRON Brain] Persuasion ({latency_ms:.0f}ms): \"{reply}\"")
                 self.context.add_conversation("ultron", reply)
@@ -554,16 +624,19 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Error generating departure persuasion: {e}")
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
 
-    def _generate_reply_worker(self, user_text: str, is_whisper: bool = False):
-        """Worker thread that formats the context and queries the LLM."""
+    def _generate_reply_worker(self, user_text: str, is_whisper: bool = False, gen_id: int = 0):
+        """Worker thread that formats the context and queries the LLM for human speech."""
         with self._lock:
-            if self._busy:
-                return  # Prevent overlapping thinking
             self._busy = True
 
         try:
+            with self._lock:
+                if gen_id != self._generation_id:
+                    return
+
             # 1. Gather live situation telemetry
             situation = self.context.get_situation_summary()
 
@@ -584,17 +657,23 @@ class ReasoningEngine:
             print(f"[ULTRON Brain] Thinking... Input: \"{user_text}\"")
             reply, latency_ms = self.client.chat(messages)
 
+            with self._lock:
+                if gen_id != self._generation_id:
+                    print(f"[ULTRON Brain] User reply preempted by newer speech.")
+                    return
+
             if reply:
                 print(f"[ULTRON Brain] Reply ({latency_ms:.0f}ms): \"{reply}\"")
 
                 # Update context memory with ULTRON's reply
                 self.context.add_conversation("ultron", reply)
 
-                # Publish event
+                # Publish event (autonomous: False marks it as direct conversational reply)
                 self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
                     "text": reply,
                     "latency_ms": latency_ms,
                     "timestamp": time.time(),
+                    "autonomous": False,
                 })
 
                 if self.on_reply is not None:
@@ -608,4 +687,6 @@ class ReasoningEngine:
 
         finally:
             with self._lock:
-                self._busy = False
+                if gen_id == self._generation_id:
+                    self._busy = False
+                    self._user_speech_pending = False

@@ -123,6 +123,9 @@ def main():
     def on_speech_detected(event):
         prob = event.data.get("probability", 0.0)
         dashboard.log_event(f"[AUDIO] Speech detected (prob: {prob:.0%})")
+        if voice_playback and voice_playback.is_speaking:
+            print("[ULTRON] User barge-in detected: interrupting playback.")
+            voice_playback.interrupt()
 
     def on_speech_recognized(event):
         text = event.data.get("text", "")
@@ -141,10 +144,11 @@ def main():
     def on_response_generated(event):
         reply = event.data.get("text", "")
         latency = event.data.get("latency_ms", 0.0)
+        is_autonomous = event.data.get("autonomous", False)
         dashboard.update_ultron_reply(reply)
         dashboard.log_event(f"[ULTRON] \"{reply}\" ({latency:.0f}ms)")
         if voice_playback:
-            voice_playback.speak(reply)
+            voice_playback.speak(reply, priority=not is_autonomous)
 
     def on_weapon_detected(event):
         tid = event.data.get("track_id", -1)

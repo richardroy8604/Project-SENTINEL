@@ -28,6 +28,9 @@ class PersonContext:
     track_id: int
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
+    departed_at: float = 0.0
+    departure_duration: float = 0.0
+    reentry_time: float = 0.0
     greeting_given: bool = False
     remark_given: bool = False
     holding_phone: bool = False
@@ -95,20 +98,29 @@ class ContextManager:
         weapon_type: str = "",
     ):
         """Update the last-seen time, phone, and weapon state for a tracked person."""
+        now = time.time()
         with self._lock:
             if track_id in self._persons:
-                self._persons[track_id].last_seen = time.time()
+                self._persons[track_id].last_seen = now
                 self._persons[track_id].holding_phone = holding_phone
                 self._persons[track_id].holding_weapon = holding_weapon
                 self._persons[track_id].weapon_type = weapon_type
             elif track_id in self._departed_persons:
                 # Returning visitor: restore their context & greeting status
                 p = self._departed_persons.pop(track_id)
-                p.last_seen = time.time()
+                dep_time = p.departed_at if p.departed_at > 0 else p.last_seen
+                duration = max(0.0, now - dep_time)
+                p.departure_duration = duration
+                p.last_seen = now
                 p.holding_phone = holding_phone
                 p.holding_weapon = holding_weapon
                 p.weapon_type = weapon_type
-                p.is_reentry = True
+                min_dep = getattr(config, "REENTRY_MIN_DEPARTURE_S", 25.0)
+                if duration >= min_dep:
+                    p.is_reentry = True
+                    p.reentry_time = now
+                else:
+                    p.is_reentry = False
                 self._persons[track_id] = p
             else:
                 self._persons[track_id] = PersonContext(
@@ -120,11 +132,13 @@ class ContextManager:
 
     def sync_active_persons(self, active_track_ids: set[int]):
         """Ensure self._persons only contains currently active IDs, moving departed ones to departed_persons."""
+        now = time.time()
         with self._lock:
             stale_ids = [tid for tid in self._persons if tid not in active_track_ids]
             for tid in stale_ids:
                 p = self._persons.pop(tid)
-                p.last_seen = time.time()
+                p.last_seen = now
+                p.departed_at = now
                 self._departed_persons[tid] = p
 
     def mark_greeting_given(self, track_id: int):
@@ -217,7 +231,12 @@ class ContextManager:
             if num_persons == 1:
                 lines.append("Note: Only 1 person is present in front of the camera (do NOT say 'another one arrived' or assume a group).")
 
+            now = time.time()
             for p in self._persons.values():
+                # Expire re-entry flag after 20s so it does not persist across future exchanges
+                if p.is_reentry and (now - p.reentry_time) > 20.0:
+                    p.is_reentry = False
+
                 if p.is_reentry:
                     dwell_str = "returned after stepping away momentarily"
                 else:
@@ -260,21 +279,32 @@ class ContextManager:
     def _on_person_entered(self, event: Event):
         track_id = event.data.get("track_id", -1)
         if track_id >= 0:
+            now = time.time()
             with self._lock:
                 if track_id in self._departed_persons:
                     p = self._departed_persons.pop(track_id)
-                    p.last_seen = time.time()
-                    p.is_reentry = True
+                    dep_time = p.departed_at if p.departed_at > 0 else p.last_seen
+                    duration = max(0.0, now - dep_time)
+                    p.departure_duration = duration
+                    p.last_seen = now
+                    min_dep = getattr(config, "REENTRY_MIN_DEPARTURE_S", 25.0)
+                    if duration >= min_dep:
+                        p.is_reentry = True
+                        p.reentry_time = now
+                    else:
+                        p.is_reentry = False
                     self._persons[track_id] = p
                 elif track_id not in self._persons:
                     self._persons[track_id] = PersonContext(track_id=track_id)
 
     def _on_person_left(self, event: Event):
         track_id = event.data.get("track_id", -1)
+        now = time.time()
         with self._lock:
             if track_id in self._persons:
                 p = self._persons.pop(track_id)
-                p.last_seen = time.time()
+                p.last_seen = now
+                p.departed_at = now
                 self._departed_persons[track_id] = p
 
     def _on_state_changed(self, event: Event):

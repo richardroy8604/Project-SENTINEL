@@ -173,6 +173,8 @@ AUTONOMOUS_GREETINGS = True        # Greet new visitors autonomously on entry
 GREETING_DELAY_S = 0.8             # Wait 0.8s to confirm visitor before greeting
 GREETING_COOLDOWN_S = 60.0         # Cooldown before re-greeting the same track ID
 PERSON_LOST_GRACE_S = 1.5          # Grace period (seconds) before considering a lost track departed
+REENTRY_MIN_DEPARTURE_S = 25.0     # Minimum departure duration (seconds) required before treating a return as a re-entry
+REENTRY_CONVERSATION_GAP_S = 30.0  # Suppress re-entry greetings if human conversation occurred within last 30s
 PERSUASION_ENABLED = True          # Prompt silent visitors to leave every minute
 PERSUASION_INTERVAL_S = 60.0       # Re-engage every 60s with escalating departure persuasion
 

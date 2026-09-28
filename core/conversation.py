@@ -174,7 +174,10 @@ class ConversationController:
         duration = event.data.get("duration", 90.0)
         now = time.time()
         with self._lock:
-            if self._is_speaking or (now - self._last_loiter_warning_time) < 30.0:
+            # Suppress if user is actively speaking or spoke in last 4.0s
+            if self._is_speaking or self._is_user_actively_talking() or (now - self._last_user_speech_time) < 4.0:
+                return
+            if (now - self._last_loiter_warning_time) < 30.0:
                 return
             if self.brain.is_busy:
                 return
@@ -188,7 +191,10 @@ class ConversationController:
         conf = event.data.get("confidence", 0.0)
         now = time.time()
         with self._lock:
-            if self._is_speaking or (now - self._last_whisper_warning_time) < 25.0:
+            # Suppress if user is actively speaking or spoke in last 4.0s (speech reply handles it)
+            if self._is_speaking or self._is_user_actively_talking() or (now - self._last_user_speech_time) < 4.0:
+                return
+            if (now - self._last_whisper_warning_time) < 25.0:
                 return
             if self.brain.is_busy:
                 return
@@ -205,7 +211,10 @@ class ConversationController:
         if new_state == config.SecurityState.SUSPICIOUS and old_state != config.SecurityState.SUSPICIOUS:
             now = time.time()
             with self._lock:
-                if self._is_speaking or (now - self._last_suspicious_state_time) < 20.0:
+                # Suppress if user is actively speaking or spoke in last 4.0s
+                if self._is_speaking or self._is_user_actively_talking() or (now - self._last_user_speech_time) < 4.0:
+                    return
+                if (now - self._last_suspicious_state_time) < 20.0:
                     return
                 if self.brain.is_busy:
                     return
@@ -265,28 +274,45 @@ class ConversationController:
                     continue
 
                 # ─────────────────────────────────────────────────────────────
-                # 1. Autonomous Greeting for New Arrivals
+                # 1. Autonomous Greeting for New Arrivals & Returning Visitors
                 # ─────────────────────────────────────────────────────────────
                 if config.AUTONOMOUS_GREETINGS:
+                    min_dep = getattr(config, "REENTRY_MIN_DEPARTURE_S", 25.0)
+                    conv_gap = getattr(config, "REENTRY_CONVERSATION_GAP_S", 30.0)
+
                     for person in persons:
+                        should_greet = False
+                        is_reentry_greeting = False
+
                         if not person.greeting_given:
-                            # Confirm person has stayed long enough to establish presence (e.g. 0.8s)
                             if person.dwell_time >= config.GREETING_DELAY_S:
+                                should_greet = True
+                        elif person.is_reentry:
+                            # Returning visitor must have been gone >= 25s, and no human speech in last 30s
+                            if person.departure_duration >= min_dep and (now - self._last_user_speech_time) >= conv_gap:
                                 last_greeted = self._last_greeting_time_by_id.get(person.track_id, 0.0)
-                                time_since_last_ultron = now - self._last_ultron_speech_time
+                                if (now - last_greeted) >= config.GREETING_COOLDOWN_S:
+                                    should_greet = True
+                                    is_reentry_greeting = True
 
-                                # Check cooldown and minimum gap after any prior speech
-                                if (now - last_greeted) >= config.GREETING_COOLDOWN_S and time_since_last_ultron >= 2.5:
-                                    # Mark greeted in context and update timestamps
-                                    self.context.mark_greeting_given(person.track_id)
-                                    with self._lock:
-                                        self._last_greeting_time_by_id[person.track_id] = now
-                                        self._last_persuasion_time_by_id[person.track_id] = now
-                                        self._last_ultron_speech_time = now
+                        if should_greet:
+                            last_greeted = self._last_greeting_time_by_id.get(person.track_id, 0.0)
+                            time_since_last_ultron = now - self._last_ultron_speech_time
 
-                                    print(f"[ULTRON Conversation] Triggering greeting for Person ID:{person.track_id} (dwell: {person.dwell_time:.1f}s)")
-                                    self.brain.generate_autonomous_greeting(person.track_id)
-                                    break  # Only trigger one utterance per loop cycle
+                            # Check cooldown and minimum gap after any prior speech
+                            if (now - last_greeted) >= config.GREETING_COOLDOWN_S and time_since_last_ultron >= 2.5:
+                                self.context.mark_greeting_given(person.track_id)
+                                if is_reentry_greeting:
+                                    person.is_reentry = False  # Mark consumed
+
+                                with self._lock:
+                                    self._last_greeting_time_by_id[person.track_id] = now
+                                    self._last_persuasion_time_by_id[person.track_id] = now
+                                    self._last_ultron_speech_time = now
+
+                                print(f"[ULTRON Conversation] Triggering greeting for Person ID:{person.track_id} (reentry={is_reentry_greeting}, dwell: {person.dwell_time:.1f}s)")
+                                self.brain.generate_autonomous_greeting(person.track_id)
+                                break  # Only trigger one utterance per loop cycle
 
                 # ─────────────────────────────────────────────────────────────
                 # 2. Every-Minute Departure Persuasion (if visitor doesn't respond)
