@@ -52,7 +52,7 @@ CAMERA_FPS = 30                   # Target capture FPS
 # =============================================================================
 WINDOW_WIDTH = 1280               # Dashboard window width
 WINDOW_HEIGHT = 720               # Dashboard window height
-WINDOW_TITLE = "ULTRON — AI Security System"
+WINDOW_TITLE = "ULTRON // AI SECURITY SENTINEL"
 
 # Video display dimensions inside the dashboard
 VIDEO_DISPLAY_WIDTH = 640
