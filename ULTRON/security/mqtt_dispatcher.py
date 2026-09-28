@@ -212,36 +212,44 @@ class MQTTDispatcher:
             "person_count": self.context.person_count,
             "persons": [
                 {
-                    "track_id": p.track_id,
+                    "id": p.track_id,
                     "dwell_s": round(p.dwell_time, 1),
-                    "holding_phone": p.holding_phone,
-                    "holding_weapon": p.holding_weapon,
-                    "weapon_type": p.weapon_type,
+                    "phone": p.holding_phone,
+                    "weapon": p.weapon_type if p.holding_weapon else None,
                 }
                 for p in self.context.persons
             ],
         }
-        self._publish("telemetry/state", json.dumps(data), qos=0)
+        self._publish("telemetry/state", json.dumps(data), qos=0, retain=True)
 
     def _on_speech_recognized(self, event: Event):
         """Publish visitor speech to ultron/telemetry/chat."""
+        text = event.data.get("text", "").strip()
+        if not text:
+            return
         data = {
             "timestamp": event.timestamp,
             "role": "visitor",
-            "text": event.data.get("text", ""),
+            "text": text,
             "latency_ms": event.data.get("latency_ms", 0.0),
         }
+        print(f"[ULTRON MQTT] -> Dispatching VISITOR dialogue: \"{text}\"")
         self._publish("telemetry/chat", json.dumps(data), qos=1)
 
     def _on_response_generated(self, event: Event):
         """Publish ULTRON's verbal replies to ultron/telemetry/chat."""
+        text = event.data.get("text", "").strip()
+        if not text:
+            return
         data = {
             "timestamp": event.timestamp,
             "role": "ultron",
-            "text": event.data.get("text", ""),
+            "text": text,
             "latency_ms": event.data.get("latency_ms", 0.0),
             "autonomous": event.data.get("autonomous", False),
         }
+        snippet = (text[:40] + "...") if len(text) > 40 else text
+        print(f"[ULTRON MQTT] -> Dispatching ULTRON dialogue: \"{snippet}\"")
         self._publish("telemetry/chat", json.dumps(data), qos=1)
 
     def _on_weapon_detected(self, event: Event):
@@ -254,6 +262,7 @@ class MQTTDispatcher:
             "weapon": event.data.get("weapon", "WEAPON"),
             "action_required": "IMMEDIATE EVACUATION & LAW ENFORCEMENT NOTIFICATION",
         }
+        print(f"[ULTRON MQTT] -> Dispatching ARMED THREAT alert!")
         self._publish("telemetry/alerts", json.dumps(data), qos=1)
 
     def _on_camera_obstructed(self, event: Event):
@@ -264,6 +273,7 @@ class MQTTDispatcher:
             "severity": "CRITICAL",
             "tamper_type": event.data.get("type", "LENS_COVERED"),
         }
+        print(f"[ULTRON MQTT] -> Dispatching CAMERA TAMPER alert!")
         self._publish("telemetry/alerts", json.dumps(data), qos=1)
 
     def _on_loitering_detected(self, event: Event):
@@ -275,20 +285,33 @@ class MQTTDispatcher:
             "track_id": event.data.get("track_id", -1),
             "duration_s": event.data.get("duration", 90.0),
         }
+        print(f"[ULTRON MQTT] -> Dispatching LOITERING alert!")
         self._publish("telemetry/alerts", json.dumps(data), qos=1)
 
     def _on_snapshot_captured(self, event: Event):
         """Publish high-res Base64 forensic snapshots to ultron/telemetry/snapshot."""
+        b64 = event.data.get("base64", "")
+        has_w = event.data.get("has_weapon", False)
+        state_str = event.data.get("security_state", "")
+        threat = "CRITICAL" if has_w else ("ELEVATED" if state_str in ("ATTENTION", "SUSPICIOUS") else "NOMINAL")
+        filename = event.data.get("filename", "")
+        trigger = event.data.get("trigger", "INCIDENT")
+
         data = {
             "timestamp": event.data.get("timestamp", time.time()),
             "time_str": event.data.get("time_str", ""),
-            "trigger": event.data.get("trigger", "INCIDENT"),
-            "security_state": event.data.get("security_state", ""),
-            "has_weapon": event.data.get("has_weapon", False),
-            "filename": event.data.get("filename", ""),
-            "image_base64": event.data.get("base64", ""),
+            "trigger": trigger,
+            "security_state": state_str,
+            "has_weapon": has_w,
+            "threat_level": threat,
+            "filename": filename,
+            "base64": b64,
+            "image_base64": b64,
+            "description": trigger,
         }
-        self._publish("telemetry/snapshot", json.dumps(data), qos=1)
+        print(f"[ULTRON MQTT] -> Dispatching SNAPSHOT ({filename}) [{threat}]")
+        self._publish("telemetry/snapshot", json.dumps(data), qos=1, retain=True)
+
 
     # ── Heartbeat Telemetry Loop ────────────────────────────────────
 

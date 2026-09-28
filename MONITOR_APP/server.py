@@ -156,8 +156,11 @@ def on_message(client, userdata, msg):
     topic = msg.topic
     try:
         payload = json.loads(msg.payload.decode("utf-8"))
-    except Exception:
+    except Exception as e:
+        print(f"[MONITOR MQTT] JSON decode error on {topic}: {e}")
         return
+
+    print(f"[MONITOR MQTT] <- Incoming [{topic}]")
 
     if "state" in topic:
         with state.lock:
@@ -170,6 +173,9 @@ def on_message(client, userdata, msg):
         })
 
     elif "chat" in topic:
+        role = payload.get("role", "visitor")
+        text = payload.get("text", "")
+        print(f"[MONITOR CHAT] [{role.upper()}]: {text}")
         with state.lock:
             state.chat_history.append(payload)
             if len(state.chat_history) > 40:
@@ -180,6 +186,14 @@ def on_message(client, userdata, msg):
         })
 
     elif "snapshot" in topic:
+        # Standardize base64 key
+        b64 = payload.get("base64") or payload.get("image_base64") or ""
+        payload["base64"] = b64
+        payload["image_base64"] = b64
+        filename = payload.get("filename", "snap.jpg")
+        trigger = payload.get("trigger", "INCIDENT")
+        print(f"[MONITOR SNAPSHOT] Got snapshot ({filename}) -> \"{trigger}\" ({len(b64)} chars Base64)")
+
         with state.lock:
             state.latest_snapshot = payload
             state.recent_snapshots.insert(0, payload)
@@ -192,6 +206,7 @@ def on_message(client, userdata, msg):
         })
 
     elif "alerts" in topic:
+        print(f"[MONITOR ALERT] {payload.get('severity')}: {payload.get('alert_type')}")
         broadcast_to_clients({
             "type": "alert",
             "data": payload,
@@ -199,6 +214,7 @@ def on_message(client, userdata, msg):
 
     elif "heartbeat" in topic:
         state.last_heartbeat = time.time()
+
 
 
 # ── REST & WebSocket Routes ─────────────────────────────────────────

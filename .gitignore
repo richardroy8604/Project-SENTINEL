@@ -23,8 +23,12 @@ models/*
 # Audio/Video Recording Dumps & Logs
 logs/*
 !logs/.gitkeep
+ULTRON/logs/*
+!ULTRON/logs/.gitkeep
 data/snapshots/*
 !data/snapshots/.gitkeep
+ULTRON/data/snapshots/*
+!ULTRON/data/snapshots/.gitkeep
 *.wav
 *.mp3
 *.mp4

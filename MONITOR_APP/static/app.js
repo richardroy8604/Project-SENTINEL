@@ -132,7 +132,7 @@
   // ── Snapshot Management ─────────────────────────────────────────
   function displayHeroSnapshot(snap) {
     if (!snap) return;
-    const src = snap.base64 || snap.url;
+    const src = snap.base64 || snap.image_base64 || snap.url;
     if (!src) return;
 
     currentSnapshotSrc = src;
@@ -143,14 +143,14 @@
     // Update Pills
     if (heroTriggerEl) heroTriggerEl.textContent = `EVENT: ${snap.trigger || 'MANUAL'}`;
     
-    const threat = (snap.threat_level || 'NOMINAL').toUpperCase();
+    const threat = (snap.threat_level || (snap.has_weapon ? 'CRITICAL' : 'NOMINAL')).toUpperCase();
     if (heroThreatEl) {
       heroThreatEl.textContent = threat;
       heroThreatEl.className = `hud-pill ${threat === 'CRITICAL' ? 'threat-critical' : 'threat-nominal'}`;
     }
 
-    if (heroTimeEl) heroTimeEl.textContent = formatTimestamp(snap.timestamp);
-    if (heroDescEl) heroDescEl.textContent = snap.description || 'Forensic action capture';
+    if (heroTimeEl) heroTimeEl.textContent = formatTimestamp(snap.timestamp || snap.time);
+    if (heroDescEl) heroDescEl.textContent = snap.description || snap.trigger || 'Forensic action capture';
 
     // Flash wrapper if critical
     const wrapper = document.querySelector('.hero-image-wrapper');
@@ -166,8 +166,9 @@
 
   function addSnapshotThumbnail(snap, prepend = true) {
     if (!snapshotStripEl || !snap) return;
-    const src = snap.base64 || snap.url;
+    const src = snap.base64 || snap.image_base64 || snap.url;
     if (!src) return;
+
 
     const card = document.createElement('div');
     card.className = 'snapshot-thumb-card';
@@ -243,7 +244,7 @@
     bubble.className = `chat-bubble ${isUltron ? 'ultron' : 'visitor'}`;
 
     const authorText = isUltron ? 'ULTRON SENTINEL' : 'VISITOR';
-    const timeText = formatTimestamp(msg.timestamp);
+    const timeText = formatTimestamp(msg.timestamp || msg.time);
     const latencyBadge = msg.latency_ms ? `<span class="bubble-badge">${Math.round(msg.latency_ms)}ms</span>` : '';
     const autoBadge = msg.autonomous ? `<span class="bubble-badge" style="border: 1px solid #ffd600; color: #ffd600;">AUTONOMOUS</span>` : '';
 
@@ -256,6 +257,7 @@
       </div>
       <div class="bubble-content">${escapeHTML(msg.text || '')}</div>
     `;
+
 
     chatStreamEl.appendChild(bubble);
     chatStreamEl.scrollTop = chatStreamEl.scrollHeight;
@@ -353,8 +355,10 @@
   // ── Server Event Dispatcher ─────────────────────────────────────
   function handleServerMessage(msg) {
     const { type, data } = msg;
+    console.log('[MONITOR WS] Event:', type, data);
 
     switch (type) {
+
       case 'init':
         setSecurityState(data.security_state);
         setPersonCount(data.person_count);
