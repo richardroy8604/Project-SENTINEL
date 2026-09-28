@@ -299,6 +299,75 @@ def test_identity_spatial_persistence():
     print("  [PASS] Frame 6: Genuinely distinct second person received canonical ID 2.")
 
 
+def test_suspicious_dialogue_dispatch():
+    print("\n--- 6. Testing Suspicious Anomaly Dialogue Dispatch ---")
+    from core.context import ContextManager
+    from core.conversation import ConversationController
+
+    class MockBrain:
+        def __init__(self):
+            self.calls = []
+            self.is_busy = False
+
+        def generate_weapon_warning(self, track_id, weapon):
+            self.calls.append(("weapon", track_id, weapon))
+            return True
+
+        def generate_tamper_warning(self, obstruction_type):
+            self.calls.append(("tamper", obstruction_type))
+            return True
+
+        def generate_loitering_warning(self, track_id, duration):
+            self.calls.append(("loitering", track_id, duration))
+            return True
+
+        def generate_whisper_warning(self, conf):
+            self.calls.append(("whisper", conf))
+            return True
+
+        def generate_suspicious_state_warning(self, reason):
+            self.calls.append(("suspicious_state", reason))
+            return True
+
+    bus = EventBus()
+    context = ContextManager(bus)
+    mock_brain = MockBrain()
+    controller = ConversationController(bus, context, mock_brain)
+
+    # 1. Trigger camera obstruction
+    bus.publish(EventTypes.CAMERA_OBSTRUCTED, {"type": "LENS_COVERED"})
+    assert any(c[0] == "tamper" and c[1] == "LENS_COVERED" for c in mock_brain.calls), "Tamper warning not triggered!"
+    print("  [PASS] Camera obstruction dispatched to brain dialogue worker.")
+
+    # 2. Trigger weapon detected
+    bus.publish(EventTypes.WEAPON_DETECTED, {"track_id": 1, "weapon": "KNIFE"})
+    assert any(c[0] == "weapon" and c[2] == "KNIFE" for c in mock_brain.calls), "Weapon warning not triggered!"
+    print("  [PASS] Weapon detection dispatched to brain dialogue worker.")
+
+    # 3. Trigger loitering detected
+    bus.publish(EventTypes.LOITERING_DETECTED, {"track_id": 1, "duration": 95.0})
+    assert any(c[0] == "loitering" and c[2] == 95.0 for c in mock_brain.calls), "Loitering warning not triggered!"
+    print("  [PASS] Loitering alert dispatched to brain dialogue worker.")
+
+    # 4. Trigger whisper detected
+    bus.publish(EventTypes.WHISPER_DETECTED, {"confidence": 0.88})
+    assert any(c[0] == "whisper" and c[1] == 0.88 for c in mock_brain.calls), "Whisper warning not triggered!"
+    print("  [PASS] Whisper detection dispatched to brain dialogue worker.")
+
+    # 5. Trigger state changed to SUSPICIOUS
+    controller._last_weapon_warning_time = 0.0
+    controller._last_tamper_warning_time = 0.0
+    controller._last_loiter_warning_time = 0.0
+    controller._last_whisper_warning_time = 0.0
+    bus.publish(EventTypes.STATE_CHANGED, {
+        "old_state": "ATTENTION",
+        "new_state": "SUSPICIOUS",
+        "reason": "Intruder attempting forced entry",
+    })
+    assert any(c[0] == "suspicious_state" for c in mock_brain.calls), "Suspicious state warning not triggered!"
+    print("  [PASS] Transition to SUSPICIOUS dispatched to brain dialogue worker.")
+
+
 if __name__ == "__main__":
     print("=" * 65)
     print("  ULTRON Stage 8 — Behavior Analytics & Threat Test Suite")
@@ -308,4 +377,5 @@ if __name__ == "__main__":
     test_whisper_classification()
     test_color_hierarchy_and_overlays()
     test_identity_spatial_persistence()
+    test_suspicious_dialogue_dispatch()
     print("\n>>> ALL STAGE 8 TESTS PASSED WITH 100% MATHEMATICAL ACCURACY! <<<\n")

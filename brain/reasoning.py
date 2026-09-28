@@ -171,6 +171,228 @@ class ReasoningEngine:
             with self._lock:
                 self._busy = False
 
+    def generate_tamper_warning(self, obstruction_type: str = "LENS_COVERED"):
+        """Generate an immediate response when camera tampering or obstruction is detected."""
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+
+        threading.Thread(
+            target=self._tamper_worker,
+            args=(obstruction_type,),
+            daemon=True,
+        ).start()
+        return True
+
+    def _tamper_worker(self, obstruction_type: str):
+        try:
+            situation = self.context.get_situation_summary()
+            messages = [{"role": "system", "content": self._system_prompt}]
+
+            for entry in self.context.conversation_history[-4:]:
+                role = "user" if entry["role"] == "human" else "assistant"
+                messages.append({"role": role, "content": entry["text"]})
+
+            tamper_prompt = (
+                f"{situation}\n\n"
+                f"[EVENT: CAMERA OBSTRUCTION DETECTED! Physical tampering type: {obstruction_type}.]\n"
+                f"Someone is physically covering, obstructing, or tampering with the camera lens. "
+                f"Confront them immediately with dry, intimidating authority (1 to 2 sharp sentences max). "
+                f"Make it clear that covering the lens does not hide their presence, confirms their hostile intent, and escalates security response."
+            )
+            messages.append({"role": "user", "content": tamper_prompt})
+
+            print(f"[ULTRON Brain] Generating tamper response ({obstruction_type})...")
+            reply, latency_ms = self.client.chat(messages)
+
+            if reply:
+                print(f"[ULTRON Brain] Tamper Remark ({latency_ms:.0f}ms): \"{reply}\"")
+                self.context.add_conversation("ultron", reply)
+                self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
+                    "text": reply,
+                    "latency_ms": latency_ms,
+                    "timestamp": time.time(),
+                    "autonomous": True,
+                    "tamper_warning": True,
+                })
+                if self.on_reply is not None:
+                    try:
+                        self.on_reply(reply)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[ULTRON Brain] Error generating tamper warning: {e}")
+        finally:
+            with self._lock:
+                self._busy = False
+
+    def generate_loitering_warning(self, track_id: int, duration_s: float = 90.0):
+        """Generate a pointed response when someone triggers a loitering anomaly."""
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+
+        threading.Thread(
+            target=self._loiter_worker,
+            args=(track_id, duration_s),
+            daemon=True,
+        ).start()
+        return True
+
+    def _loiter_worker(self, track_id: int, duration_s: float):
+        try:
+            situation = self.context.get_situation_summary()
+            messages = [{"role": "system", "content": self._system_prompt}]
+
+            for entry in self.context.conversation_history[-4:]:
+                role = "user" if entry["role"] == "human" else "assistant"
+                messages.append({"role": role, "content": entry["text"]})
+
+            loiter_prompt = (
+                f"{situation}\n\n"
+                f"[EVENT: LOITERING SECURITY ALERT! Person ID:{track_id} has been lingering stationary in the doorway/view for {int(duration_s)}s.]\n"
+                f"They have crossed the security threshold for loitering/casing the area. "
+                f"Deliver a pointed, dryly intimidating confrontation (1 to 2 sharp sentences max). "
+                f"Remind them their stationary lingering has triggered an alert and their footage is actively being logged and dispatched. Urge them to leave immediately."
+            )
+            messages.append({"role": "user", "content": loiter_prompt})
+
+            print(f"[ULTRON Brain] Generating loitering alert response for Person ID:{track_id}...")
+            reply, latency_ms = self.client.chat(messages)
+
+            if reply:
+                print(f"[ULTRON Brain] Loitering Remark ({latency_ms:.0f}ms): \"{reply}\"")
+                self.context.add_conversation("ultron", reply)
+                self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
+                    "text": reply,
+                    "latency_ms": latency_ms,
+                    "timestamp": time.time(),
+                    "autonomous": True,
+                    "loitering_warning": True,
+                })
+                if self.on_reply is not None:
+                    try:
+                        self.on_reply(reply)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[ULTRON Brain] Error generating loitering warning: {e}")
+        finally:
+            with self._lock:
+                self._busy = False
+
+    def generate_whisper_warning(self, confidence: float = 0.8):
+        """Generate a response when hushed / whispered speech is detected."""
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+
+        threading.Thread(
+            target=self._whisper_worker,
+            args=(confidence,),
+            daemon=True,
+        ).start()
+        return True
+
+    def _whisper_worker(self, confidence: float):
+        try:
+            situation = self.context.get_situation_summary()
+            messages = [{"role": "system", "content": self._system_prompt}]
+
+            for entry in self.context.conversation_history[-4:]:
+                role = "user" if entry["role"] == "human" else "assistant"
+                messages.append({"role": role, "content": entry["text"]})
+
+            whisper_prompt = (
+                f"{situation}\n\n"
+                f"[EVENT: WHISPERED / HUSHED SPEECH DETECTED near the camera.]\n"
+                f"Deliver a quiet, dry, unsettling observation (1 sentence). "
+                f"Let them know that whispering near high-sensitivity security microphones is futile and suggests they have something to hide."
+            )
+            messages.append({"role": "user", "content": whisper_prompt})
+
+            print(f"[ULTRON Brain] Generating whisper reaction...")
+            reply, latency_ms = self.client.chat(messages)
+
+            if reply:
+                print(f"[ULTRON Brain] Whisper Remark ({latency_ms:.0f}ms): \"{reply}\"")
+                self.context.add_conversation("ultron", reply)
+                self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
+                    "text": reply,
+                    "latency_ms": latency_ms,
+                    "timestamp": time.time(),
+                    "autonomous": True,
+                    "whisper_warning": True,
+                })
+                if self.on_reply is not None:
+                    try:
+                        self.on_reply(reply)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[ULTRON Brain] Error generating whisper warning: {e}")
+        finally:
+            with self._lock:
+                self._busy = False
+
+    def generate_suspicious_state_warning(self, reason: str):
+        """Generate a response when the overall security state transitions to SUSPICIOUS."""
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+
+        threading.Thread(
+            target=self._suspicious_state_worker,
+            args=(reason,),
+            daemon=True,
+        ).start()
+        return True
+
+    def _suspicious_state_worker(self, reason: str):
+        try:
+            situation = self.context.get_situation_summary()
+            messages = [{"role": "system", "content": self._system_prompt}]
+
+            for entry in self.context.conversation_history[-4:]:
+                role = "user" if entry["role"] == "human" else "assistant"
+                messages.append({"role": role, "content": entry["text"]})
+
+            suspicious_prompt = (
+                f"{situation}\n\n"
+                f"[EVENT: SECURITY STATE ESCALATED TO SUSPICIOUS! Reason: {reason}.]\n"
+                f"Deliver a chilling, observant remark (1 to 2 sharp sentences max). "
+                f"Hint casually that the situation has escalated, an anomaly was registered, and they are now subject to heightened scrutiny."
+            )
+            messages.append({"role": "user", "content": suspicious_prompt})
+
+            print(f"[ULTRON Brain] Generating SUSPICIOUS state remark ({reason})...")
+            reply, latency_ms = self.client.chat(messages)
+
+            if reply:
+                print(f"[ULTRON Brain] Suspicious Remark ({latency_ms:.0f}ms): \"{reply}\"")
+                self.context.add_conversation("ultron", reply)
+                self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
+                    "text": reply,
+                    "latency_ms": latency_ms,
+                    "timestamp": time.time(),
+                    "autonomous": True,
+                    "suspicious_warning": True,
+                })
+                if self.on_reply is not None:
+                    try:
+                        self.on_reply(reply)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[ULTRON Brain] Error generating suspicious state warning: {e}")
+        finally:
+            with self._lock:
+                self._busy = False
+
     def _greeting_worker(self, track_id: int):
         """Worker thread for autonomous greetings."""
         try:

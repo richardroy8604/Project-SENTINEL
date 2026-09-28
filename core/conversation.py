@@ -59,6 +59,10 @@ class ConversationController:
         self._last_speech_detected_time: float = 0.0
         self._last_user_speech_time: float = 0.0
         self._last_weapon_warning_time: float = 0.0
+        self._last_tamper_warning_time: float = 0.0
+        self._last_loiter_warning_time: float = 0.0
+        self._last_whisper_warning_time: float = 0.0
+        self._last_suspicious_state_time: float = 0.0
         self._is_speaking: bool = False
 
         # Subscriptions
@@ -69,6 +73,10 @@ class ConversationController:
         self.event_bus.subscribe(EventTypes.PERSON_ENTERED, self._on_person_entered)
         self.event_bus.subscribe(EventTypes.PERSON_LEFT, self._on_person_left)
         self.event_bus.subscribe(EventTypes.WEAPON_DETECTED, self._on_weapon_detected)
+        self.event_bus.subscribe(EventTypes.CAMERA_OBSTRUCTED, self._on_camera_obstructed)
+        self.event_bus.subscribe(EventTypes.LOITERING_DETECTED, self._on_loitering_detected)
+        self.event_bus.subscribe(EventTypes.WHISPER_DETECTED, self._on_whisper_detected)
+        self.event_bus.subscribe(EventTypes.STATE_CHANGED, self._on_state_changed)
 
     def start(self):
         """Start the autonomous conversation monitor loop."""
@@ -146,6 +154,75 @@ class ConversationController:
 
         print(f"[ULTRON Conversation] Triggering weapon deterrence for Person ID:{track_id} ({weapon})")
         self.brain.generate_weapon_warning(track_id, weapon)
+
+    def _on_camera_obstructed(self, event: Event):
+        obstruction_type = event.data.get("type", "LENS_COVERED")
+        now = time.time()
+        with self._lock:
+            if self._is_speaking or (now - self._last_tamper_warning_time) < 15.0:
+                return
+            if self.brain.is_busy:
+                return
+            self._last_tamper_warning_time = now
+            self._last_ultron_speech_time = now
+
+        print(f"[ULTRON Conversation] Triggering camera tamper response ({obstruction_type})")
+        self.brain.generate_tamper_warning(obstruction_type)
+
+    def _on_loitering_detected(self, event: Event):
+        track_id = event.data.get("track_id", -1)
+        duration = event.data.get("duration", 90.0)
+        now = time.time()
+        with self._lock:
+            if self._is_speaking or (now - self._last_loiter_warning_time) < 30.0:
+                return
+            if self.brain.is_busy:
+                return
+            self._last_loiter_warning_time = now
+            self._last_ultron_speech_time = now
+
+        print(f"[ULTRON Conversation] Triggering loitering deterrence for Person ID:{track_id} ({duration:.0f}s)")
+        self.brain.generate_loitering_warning(track_id, duration)
+
+    def _on_whisper_detected(self, event: Event):
+        conf = event.data.get("confidence", 0.0)
+        now = time.time()
+        with self._lock:
+            if self._is_speaking or (now - self._last_whisper_warning_time) < 25.0:
+                return
+            if self.brain.is_busy:
+                return
+            self._last_whisper_warning_time = now
+            self._last_ultron_speech_time = now
+
+        print(f"[ULTRON Conversation] Triggering whisper reaction (conf: {conf:.0%})")
+        self.brain.generate_whisper_warning(conf)
+
+    def _on_state_changed(self, event: Event):
+        new_state = event.data.get("new_state", "")
+        old_state = event.data.get("old_state", "")
+        reason = event.data.get("reason", "")
+        if new_state == config.SecurityState.SUSPICIOUS and old_state != config.SecurityState.SUSPICIOUS:
+            now = time.time()
+            with self._lock:
+                if self._is_speaking or (now - self._last_suspicious_state_time) < 20.0:
+                    return
+                if self.brain.is_busy:
+                    return
+                # Prevent overlapping if a specific warning fired in the last 4 seconds
+                recent_warning = max(
+                    self._last_weapon_warning_time,
+                    self._last_tamper_warning_time,
+                    self._last_loiter_warning_time,
+                    self._last_whisper_warning_time,
+                )
+                if (now - recent_warning) < 4.0:
+                    return
+                self._last_suspicious_state_time = now
+                self._last_ultron_speech_time = now
+
+            print(f"[ULTRON Conversation] Triggering SUSPICIOUS state remark: {reason}")
+            self.brain.generate_suspicious_state_warning(reason)
 
     # ── Half-Duplex State Checks ────────────────────────────────────
 
