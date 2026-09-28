@@ -232,15 +232,8 @@ def main():
 
                 now_ts = time.time()
 
-                # ── Map raw tracker IDs to persistent canonical IDs ──
-                for p in result.persons:
-                    if p.track_id >= 0:
-                        p.track_id = identity_tracker.resolve_track_id(p.track_id, now_ts)
-
-                current_ids = {
-                    p.track_id for p in result.persons if p.track_id >= 0
-                }
-                identity_tracker.set_active_ids(current_ids)
+                # ── Map raw tracker detections to persistent canonical IDs ──
+                current_ids = identity_tracker.resolve_frame_persons(result.persons, now_ts)
 
                 # Update last seen for all detected IDs
                 for tid in current_ids:
@@ -263,7 +256,6 @@ def main():
                         if (now_ts - last_seen_time) >= config.PERSON_LOST_GRACE_S:
                             active_tracked_ids.remove(tid)
                             tracked_last_seen.pop(tid, None)
-                            identity_tracker.on_person_departed(tid, now_ts)
 
                             # Calculate how long they were present
                             person_ctx = None
@@ -309,8 +301,11 @@ def main():
                             weapon_type=person.weapon_type,
                         )
 
-                # Sync person count to state machine using active_tracked_ids
-                state_machine.set_person_count(len(active_tracked_ids))
+                # Sync context memory so ghost persons never accumulate
+                context.sync_active_persons(current_ids)
+
+                # Sync person count to state machine using genuine physical person count
+                state_machine.set_person_count(len(current_ids))
 
                 # Update dashboard detection stats
                 dashboard.update_detection_info(

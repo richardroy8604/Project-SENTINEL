@@ -118,6 +118,15 @@ class ContextManager:
                     weapon_type=weapon_type,
                 )
 
+    def sync_active_persons(self, active_track_ids: set[int]):
+        """Ensure self._persons only contains currently active IDs, moving departed ones to departed_persons."""
+        with self._lock:
+            stale_ids = [tid for tid in self._persons if tid not in active_track_ids]
+            for tid in stale_ids:
+                p = self._persons.pop(tid)
+                p.last_seen = time.time()
+                self._departed_persons[tid] = p
+
     def mark_greeting_given(self, track_id: int):
         """Mark that ULTRON has greeted this person."""
         with self._lock:

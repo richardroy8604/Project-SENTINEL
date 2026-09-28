@@ -213,6 +213,92 @@ def test_color_hierarchy_and_overlays():
     print("         - Normal persons            -> Tactical Green (0, 255, 100)")
 
 
+def test_identity_spatial_persistence():
+    print("\n--- 5. Testing Identity Spatial Persistence & Re-Entry ---")
+    from core.identity import IdentityTracker
+
+    tracker = IdentityTracker(reid_window_s=60.0)
+    now = time.time()
+
+    # Frame 1: Single person detected with raw ID 1
+    p1 = PersonDetection(
+        track_id=1,
+        bbox=(200, 100, 350, 400),
+        confidence=0.90,
+        center=(275, 250),
+        bbox_area=150 * 300,
+    )
+    active = tracker.resolve_frame_persons([p1], now)
+    assert p1.track_id == 1, f"Expected canonical ID 1, got {p1.track_id}"
+    assert len(active) == 1, f"Expected 1 active person, got {len(active)}"
+    print("  [PASS] Frame 1: Person assigned canonical ID 1.")
+
+    # Frame 2: ByteTrack drops and assigns raw ID 2 to the same person (shifted 5 pixels)
+    p2 = PersonDetection(
+        track_id=2,
+        bbox=(205, 100, 355, 400),
+        confidence=0.90,
+        center=(280, 250),
+        bbox_area=150 * 300,
+    )
+    active = tracker.resolve_frame_persons([p2], now + 0.033)
+    assert p2.track_id == 1, f"Tracker ID churn was not mapped to canonical ID 1! Got {p2.track_id}"
+    assert len(active) == 1, f"Ghost person created! Expected 1, got {len(active)}"
+    print("  [PASS] Frame 2: ByteTrack raw ID 2 seamlessly preserved as canonical ID 1 via spatial overlap.")
+
+    # Frame 3: ByteTrack jumps to raw ID 27 (shifted 10 pixels)
+    p3 = PersonDetection(
+        track_id=27,
+        bbox=(210, 105, 360, 405),
+        confidence=0.88,
+        center=(285, 255),
+        bbox_area=150 * 300,
+    )
+    active = tracker.resolve_frame_persons([p3], now + 0.066)
+    assert p3.track_id == 1, f"Raw ID 27 was not mapped to canonical ID 1! Got {p3.track_id}"
+    assert len(active) == 1, f"Ghost persons accumulated! Got {len(active)}"
+    print("  [PASS] Frame 3: ByteTrack raw ID 27 preserved as canonical ID 1.")
+
+    # Frame 4: Person leaves view (empty frame)
+    active = tracker.resolve_frame_persons([], now + 1.0)
+    assert len(active) == 0, f"Expected 0 active persons after departure, got {len(active)}"
+    print("  [PASS] Frame 4: Departure registered, 0 active persons.")
+
+    # Frame 5: Person returns 10 seconds later with raw ID 45
+    p5 = PersonDetection(
+        track_id=45,
+        bbox=(220, 110, 370, 410),
+        confidence=0.89,
+        center=(295, 260),
+        bbox_area=150 * 300,
+    )
+    active = tracker.resolve_frame_persons([p5], now + 11.0)
+    assert p5.track_id == 1, f"Returning person received new ID! Expected 1, got {p5.track_id}"
+    assert len(active) == 1, f"Expected 1 active person, got {len(active)}"
+    print("  [PASS] Frame 5: Returning visitor re-identified as canonical ID 1 (no new stranger ID).")
+
+    # Frame 6: Genuine second person enters simultaneously on the other side of the room
+    p6_a = PersonDetection(
+        track_id=45,
+        bbox=(220, 110, 370, 410),
+        confidence=0.89,
+        center=(295, 260),
+        bbox_area=150 * 300,
+    )
+    p6_b = PersonDetection(
+        track_id=52,
+        bbox=(500, 120, 620, 420),
+        confidence=0.85,
+        center=(560, 270),
+        bbox_area=120 * 300,
+    )
+    active = tracker.resolve_frame_persons([p6_a, p6_b], now + 12.0)
+    assert p6_a.track_id == 1, f"Person A changed from 1 to {p6_a.track_id}"
+    assert p6_b.track_id == 2, f"Expected Person B to receive canonical ID 2, got {p6_b.track_id}"
+    assert len(active) == 2, f"Expected 2 active persons, got {len(active)}"
+    print("  [PASS] Frame 6: Genuinely distinct second person received canonical ID 2.")
+
+
 if __name__ == "__main__":
     print("=" * 65)
     print("  ULTRON Stage 8 — Behavior Analytics & Threat Test Suite")
@@ -221,4 +307,5 @@ if __name__ == "__main__":
     test_loitering_detection()
     test_whisper_classification()
     test_color_hierarchy_and_overlays()
+    test_identity_spatial_persistence()
     print("\n>>> ALL STAGE 8 TESTS PASSED WITH 100% MATHEMATICAL ACCURACY! <<<\n")

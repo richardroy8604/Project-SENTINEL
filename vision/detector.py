@@ -148,35 +148,38 @@ class PersonDetector:
                 x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy().astype(int)
                 conf = float(boxes.conf[i].cpu().numpy())
 
-                if cls_id == 67:  # Cell phone
-                    if conf >= 0.35:
-                        phone_boxes.append((x1, y1, x2, y2, conf))
-                elif cls_id in config.WEAPON_CLASSES:
-                    if conf >= getattr(config, "WEAPON_CONFIDENCE", 0.35):
-                        weapon_name = config.WEAPON_CLASSES[cls_id]
-                        weapon_boxes.append((x1, y1, x2, y2, conf, weapon_name))
-                elif cls_id == 0:  # Person
-                    if conf >= self.confidence:
-                        track_id = -1
-                        if boxes.id is not None:
-                            try:
-                                track_id = int(boxes.id[i].cpu().numpy())
-                            except Exception:
-                                pass
-                        if track_id < 0:
-                            track_id = 1 + i  # Fallback valid track ID if tracker is initializing
+                try:
+                    if cls_id == 67:  # Cell phone
+                        if conf >= 0.35:
+                            phone_boxes.append((x1, y1, x2, y2, conf))
+                    elif cls_id in config.WEAPON_CLASSES:
+                        if conf >= getattr(config, "WEAPON_CONFIDENCE", 0.35):
+                            weapon_name = config.WEAPON_CLASSES[cls_id]
+                            weapon_boxes.append((x1, y1, x2, y2, conf, weapon_name))
+                    elif cls_id == 0:  # Person
+                        if conf >= self.confidence:
+                            track_id = -1
+                            if boxes.id is not None:
+                                try:
+                                    track_id = int(boxes.id[i].cpu().numpy())
+                                except Exception:
+                                    pass
+                            if track_id < 0:
+                                track_id = 1 + i  # Fallback valid track ID if tracker is initializing
 
-                    cx = (x1 + x2) // 2
-                    cy = (y1 + y2) // 2
-                    area = (x2 - x1) * (y2 - y1)
+                            cx = (x1 + x2) // 2
+                            cy = (y1 + y2) // 2
+                            area = (x2 - x1) * (y2 - y1)
 
-                    raw_persons.append({
-                        "track_id": track_id,
-                        "bbox": (x1, y1, x2, y2),
-                        "confidence": conf,
-                        "center": (cx, cy),
-                        "bbox_area": area,
-                    })
+                            raw_persons.append({
+                                "track_id": track_id,
+                                "bbox": (x1, y1, x2, y2),
+                                "confidence": conf,
+                                "center": (cx, cy),
+                                "bbox_area": area,
+                            })
+                except Exception as box_err:
+                    print(f"[ULTRON Vision] Non-fatal error parsing box {i}: {box_err}")
 
         # Match phones and weapons to persons
         persons = []
