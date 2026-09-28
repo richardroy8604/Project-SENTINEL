@@ -42,6 +42,9 @@ class MQTTDispatcher:
         self.enabled = getattr(config, "MQTT_ENABLED", True)
         self.broker_host = getattr(config, "MQTT_BROKER_HOST", "broker.hivemq.com")
         self.broker_port = getattr(config, "MQTT_BROKER_PORT", 1883)
+        self.username = getattr(config, "MQTT_USERNAME", None)
+        self.password = getattr(config, "MQTT_PASSWORD", None)
+        self.tls_enabled = getattr(config, "MQTT_TLS_ENABLED", False) or (self.broker_port == 8883)
         self.client_id = getattr(config, "MQTT_CLIENT_ID", f"ultron_edge_{int(time.time())}")
         self.topic_prefix = getattr(config, "MQTT_TOPIC_PREFIX", "ultron").rstrip("/")
         self.keepalive = getattr(config, "MQTT_KEEPALIVE", 60)
@@ -68,6 +71,14 @@ class MQTTDispatcher:
             self._client.on_connect = self._on_connect
             self._client.on_disconnect = self._on_disconnect
 
+            # Configure TLS encryption (required for port 8883 HiveMQ Cloud)
+            if self.tls_enabled:
+                self._client.tls_set()
+
+            # Configure authentication credentials
+            if self.username and self.password:
+                self._client.username_pw_set(self.username, self.password)
+
             # Set Will (LWT) message in case of ungraceful disconnection
             will_payload = json.dumps({
                 "status": "OFFLINE",
@@ -81,6 +92,7 @@ class MQTTDispatcher:
                 qos=1,
                 retain=True,
             )
+
 
         except Exception as e:
             print(f"[ULTRON MQTT] Error setting up client: {e}")

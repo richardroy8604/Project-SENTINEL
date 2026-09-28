@@ -224,11 +224,15 @@ WEB_SERVER_ENABLED = True
 WEB_SERVER_HOST = "0.0.0.0"        # Listen on all interfaces (accessible via http://<laptop-ip>:8000)
 WEB_SERVER_PORT = 8000
 
-# IoT MQTT Telemetry & Alert Dispatch
+# IoT MQTT Telemetry & Alert Dispatch (Private HiveMQ Cloud Cluster)
 MQTT_ENABLED = True
-MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "broker.hivemq.com")  # Public cloud broker
-MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", 1883))
+MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "2fd0cc9fccec48b9befe7b3d4b75cc59.s1.eu.hivemq.cloud")
+MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", 8883))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "hivemq.webclient.1790576042940")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "nMJJC!GVDRqO*cKXz%Rhcyiwz7c6FPCq")
+MQTT_TLS_ENABLED = os.getenv("MQTT_TLS_ENABLED", "True").lower() in ("true", "1", "yes")
 MQTT_CLIENT_ID = f"ultron_edge_{int(time.time())}"
-MQTT_TOPIC_PREFIX = "ultron"       # Base topic prefix (e.g. ultron/state, ultron/chat, ultron/snapshot)
+MQTT_TOPIC_PREFIX = "ultron"       # Base topic prefix (e.g. ultron/telemetry/state, ultron/telemetry/snapshot)
 MQTT_KEEPALIVE = 60
+
 
