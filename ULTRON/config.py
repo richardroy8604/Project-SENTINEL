@@ -22,6 +22,9 @@ LOGS_DIR.mkdir(exist_ok=True)
 
 # Auto-load .env file if present
 _env_file = PROJECT_ROOT / ".env"
+if not _env_file.exists():
+    _env_file = PROJECT_ROOT.parent / ".env"
+
 if _env_file.exists():
     try:
         with open(_env_file, "r", encoding="utf-8") as _f:

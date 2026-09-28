@@ -34,7 +34,7 @@ from security import (
     SnapshotManager,
     MQTTDispatcher,
 )
-from web.server import WebServer
+
 
 
 def main():
@@ -67,16 +67,8 @@ def main():
     mqtt_dispatcher = MQTTDispatcher(event_bus=event_bus, context=context)
     mqtt_dispatcher.start()
 
-    print("[ULTRON] Initializing Remote Web Companion & WebSocket Hub...")
-    web_server = WebServer(
-        event_bus=event_bus,
-        context=context,
-        snapshot_manager=snapshot_manager,
-        mqtt_dispatcher=mqtt_dispatcher,
-    )
-    web_server.start()
-
     # ── Initialize Camera ───────────────────────────────────────────
+
     print("[ULTRON] Initializing camera...")
     camera = Camera()
     if not camera.start():
@@ -230,8 +222,7 @@ def main():
         dashboard.log_event("[ULTRON] Security: Camera tamper & obstruction monitor active")
     if getattr(config, "MQTT_ENABLED", True):
         dashboard.log_event(f"[ULTRON] IoT: MQTT Gateway ({config.MQTT_BROKER_HOST})")
-    if getattr(config, "WEB_SERVER_ENABLED", True):
-        dashboard.log_event(f"[ULTRON] Web: Companion Hub on port {config.WEB_SERVER_PORT}")
+
     if voice_playback:
         if config.TTS_PROVIDER == "fish":
             v_name = f"Fish Audio ({config.FISH_AUDIO_VOICE_ID[:8]}...)"
@@ -420,10 +411,9 @@ def main():
 
     finally:
         print("[ULTRON] Shutting down...")
-        if web_server:
-            web_server.stop()
         if mqtt_dispatcher:
             mqtt_dispatcher.stop()
+
         if conversation:
             conversation.stop()
         if voice_playback:
