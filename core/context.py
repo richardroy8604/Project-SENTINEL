@@ -31,6 +31,8 @@ class PersonContext:
     greeting_given: bool = False
     remark_given: bool = False
     holding_phone: bool = False
+    holding_weapon: bool = False
+    weapon_type: str = ""
     persuasion_count: int = 0
     last_persuasion_time: float = 0.0
     is_reentry: bool = False
@@ -85,22 +87,35 @@ class ContextManager:
 
     # ── Person Tracking ─────────────────────────────────────────────
 
-    def update_person(self, track_id: int, holding_phone: bool = False):
-        """Update the last-seen time and holding_phone state for a tracked person."""
+    def update_person(
+        self,
+        track_id: int,
+        holding_phone: bool = False,
+        holding_weapon: bool = False,
+        weapon_type: str = "",
+    ):
+        """Update the last-seen time, phone, and weapon state for a tracked person."""
         with self._lock:
             if track_id in self._persons:
                 self._persons[track_id].last_seen = time.time()
                 self._persons[track_id].holding_phone = holding_phone
+                self._persons[track_id].holding_weapon = holding_weapon
+                self._persons[track_id].weapon_type = weapon_type
             elif track_id in self._departed_persons:
                 # Returning visitor: restore their context & greeting status
                 p = self._departed_persons.pop(track_id)
                 p.last_seen = time.time()
                 p.holding_phone = holding_phone
+                p.holding_weapon = holding_weapon
+                p.weapon_type = weapon_type
                 p.is_reentry = True
                 self._persons[track_id] = p
             else:
                 self._persons[track_id] = PersonContext(
-                    track_id=track_id, holding_phone=holding_phone
+                    track_id=track_id,
+                    holding_phone=holding_phone,
+                    holding_weapon=holding_weapon,
+                    weapon_type=weapon_type,
                 )
 
     def mark_greeting_given(self, track_id: int):
@@ -200,9 +215,18 @@ class ContextManager:
                     dwell_str = _qualitative_dwell(p.dwell_time)
                 greeted = "YES" if p.greeting_given else "NO"
                 phone_tag = ", HOLDING PHONE / RECORDING: YES" if p.holding_phone else ""
+                weapon_tag = f", HOLDING WEAPON: {p.weapon_type} (ARMED THREAT)" if p.holding_weapon else ""
                 lines.append(
-                    f"  Person ID:{p.track_id} — duration: {dwell_str}, greeted: {greeted}, departure_prompts_given: {p.persuasion_count}{phone_tag}"
+                    f"  Person ID:{p.track_id} — duration: {dwell_str}, greeted: {greeted}, departure_prompts_given: {p.persuasion_count}{phone_tag}{weapon_tag}"
                 )
+
+            armed_persons = [p for p in self._persons.values() if p.holding_weapon]
+            if armed_persons:
+                for ap in armed_persons:
+                    lines.append(
+                        f"CRITICAL ALERT: Person ID:{ap.track_id} is brandishing a {ap.weapon_type}! "
+                        f"Order them immediately and sternly to drop or put the weapon away and step back."
+                    )
 
             if self._last_speech_text:
                 lines.append(f"Last person speech: \"{self._last_speech_text}\"")

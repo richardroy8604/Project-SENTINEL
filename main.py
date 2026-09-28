@@ -28,6 +28,7 @@ from audio.listener import AudioListener
 from brain.reasoning import ReasoningEngine
 from voice import TTSEngine, VoicePlayback
 from ui.dashboard import Dashboard
+from security import CameraTamperDetector, LoiteringDetector
 
 
 def main():
@@ -46,6 +47,11 @@ def main():
     event_bus = EventBus()
     state_machine = StateMachine(event_bus)
     context = ContextManager(event_bus)
+
+    # ── Initialize Behavior & Security Analytics (Stage 8) ─────────
+    print("[ULTRON] Initializing security & behavior analytics...")
+    tamper_detector = CameraTamperDetector(event_bus=event_bus)
+    loitering_detector = LoiteringDetector(event_bus=event_bus)
 
     # ── Initialize Camera ───────────────────────────────────────────
     print("[ULTRON] Initializing camera...")
@@ -140,21 +146,53 @@ def main():
         if voice_playback:
             voice_playback.speak(reply)
 
+    def on_weapon_detected(event):
+        tid = event.data.get("track_id", -1)
+        w = event.data.get("weapon", "WEAPON")
+        dashboard.log_event(f"[ALERT] ARMED THREAT: Person ID:{tid} holding {w}!")
+
+    def on_loitering_detected(event):
+        tid = event.data.get("track_id", -1)
+        dur = event.data.get("duration", 0)
+        dashboard.log_event(f"[ALERT] Loitering: Person ID:{tid} stationary ({int(dur)}s)")
+
+    def on_camera_obstructed(event):
+        t = event.data.get("type", "UNKNOWN")
+        dashboard.log_event(f"[ALERT] Camera tamper detected: {t}")
+
+    def on_tamper_cleared(event):
+        t = event.data.get("cleared_type", "")
+        dashboard.log_event(f"[SECURITY] Camera tamper cleared ({t})")
+
+    def on_whisper_detected(event):
+        conf = event.data.get("confidence", 0.0)
+        dashboard.log_event(f"[AUDIO] Whispered speech detected (conf: {conf:.0%})")
+
     event_bus.subscribe(EventTypes.STATE_CHANGED, on_state_changed)
     event_bus.subscribe(EventTypes.SPEECH_DETECTED, on_speech_detected)
     event_bus.subscribe(EventTypes.SPEECH_RECOGNIZED, on_speech_recognized)
     event_bus.subscribe(EventTypes.RESPONSE_GENERATED, on_response_generated)
     event_bus.subscribe(EventTypes.SPEAKING_STARTED, on_speaking_started)
     event_bus.subscribe(EventTypes.SPEAKING_FINISHED, on_speaking_finished)
+    event_bus.subscribe(EventTypes.WEAPON_DETECTED, on_weapon_detected)
+    event_bus.subscribe(EventTypes.LOITERING_DETECTED, on_loitering_detected)
+    event_bus.subscribe(EventTypes.CAMERA_OBSTRUCTED, on_camera_obstructed)
+    event_bus.subscribe(EventTypes.TAMPER_CLEARED, on_tamper_cleared)
+    event_bus.subscribe(EventTypes.WHISPER_DETECTED, on_whisper_detected)
 
     dashboard.log_event("[ULTRON] Core systems online.")
     dashboard.log_event("[ULTRON] Camera active.")
     if detector and detector.is_loaded:
-        phone_tag = " + Cell Phone Detection" if config.VISION_DETECT_PHONES else ""
-        dashboard.log_event(f"[ULTRON] Vision: YOLO11s on {config.DETECTION_DEVICE}{phone_tag}")
+        phone_tag = " + Phone Detection" if config.VISION_DETECT_PHONES else ""
+        weapon_tag = " + Threat/Weapon Recognition" if getattr(config, "VISION_DETECT_WEAPONS", True) else ""
+        dashboard.log_event(f"[ULTRON] Vision: YOLO11s on {config.DETECTION_DEVICE}{phone_tag}{weapon_tag}")
     if audio_listener:
-        dashboard.log_event(f"[ULTRON] Audio: Silero VAD + faster-whisper ({config.STT_MODEL_SIZE})")
+        dashboard.log_event(f"[ULTRON] Audio: Silero VAD + faster-whisper ({config.STT_MODEL_SIZE}) + Whisper Classifier")
     dashboard.log_event(f"[ULTRON] Brain: Persona active ({config.LLM_MODEL})")
+    if getattr(config, "LOITERING_DETECTION_ENABLED", True):
+        dashboard.log_event(f"[ULTRON] Behavior: Loitering engine active ({int(config.LOITERING_THRESHOLD_S)}s limit)")
+    if getattr(config, "TAMPER_DETECTION_ENABLED", True):
+        dashboard.log_event("[ULTRON] Security: Camera tamper & obstruction monitor active")
     if voice_playback:
         if config.TTS_PROVIDER == "fish":
             v_name = f"Fish Audio ({config.FISH_AUDIO_VOICE_ID[:8]}...)"
@@ -184,18 +222,13 @@ def main():
                     break
                 continue
 
-            # 2. Run person & phone detection + tracking
+            # 2. Evaluate physical camera tampering / obstruction
+            is_tampered, tamper_type, _ = tamper_detector.evaluate_frame(frame_bgr)
+
+            # 3. Run person, weapon, & phone detection + tracking
             if detector and detector.is_loaded:
-                result = detector.detect(frame_bgr, draw=True)
-
-                display_frame = result.frame_annotated if result.frame_annotated is not None else frame_bgr
-                display_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
-
-                # Update dashboard detection stats
-                dashboard.update_detection_info(
-                    person_count=result.person_count,
-                    inference_ms=result.inference_ms,
-                )
+                # Run detection without drawing yet to resolve canonical IDs first
+                result = detector.detect(frame_bgr, draw=False)
 
                 now_ts = time.time()
 
@@ -249,18 +282,80 @@ def main():
                                 f"[VISION] Person ID:{tid} left view ({duration}s)."
                             )
 
-                # Update context with current persons & holding phone state
+                # ── Publish Weapon Detected Events ──
+                if result.weapon_detected:
+                    for p in result.persons:
+                        if p.holding_weapon and p.track_id >= 0:
+                            event_bus.publish(EventTypes.WEAPON_DETECTED, {
+                                "track_id": p.track_id,
+                                "weapon": p.weapon_type,
+                                "timestamp": now_ts,
+                            })
+
+                # ── Update Loitering Analytics ──
+                loitering_ids = loitering_detector.update_tracks(
+                    result.persons,
+                    frame_width=frame_bgr.shape[1],
+                    frame_height=frame_bgr.shape[0],
+                )
+
+                # Update context with current persons & holding phone / weapon state
                 for person in result.persons:
                     if person.track_id >= 0:
                         context.update_person(
-                            person.track_id, holding_phone=person.holding_phone
+                            person.track_id,
+                            holding_phone=person.holding_phone,
+                            holding_weapon=person.holding_weapon,
+                            weapon_type=person.weapon_type,
                         )
 
                 # Sync person count to state machine using active_tracked_ids
                 state_machine.set_person_count(len(active_tracked_ids))
 
+                # Update dashboard detection stats
+                dashboard.update_detection_info(
+                    person_count=result.person_count,
+                    inference_ms=result.inference_ms,
+                )
+
+                # Draw overlays with persistent canonical IDs and loitering badges
+                display_frame = detector.draw_overlays(
+                    frame_bgr.copy(),
+                    result.persons,
+                    phone_boxes=result.phone_boxes,
+                    weapon_boxes=result.weapon_boxes,
+                    loitering_ids=loitering_ids,
+                )
+
+                # Overlay tamper alert if actively obstructed
+                if is_tampered:
+                    cv2.putText(
+                        display_frame,
+                        f"CAMERA OBSTRUCTED: {tamper_type}",
+                        (20, 65),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.75,
+                        (0, 0, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+                display_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+
             else:
-                display_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                display_frame = frame_bgr.copy()
+                if is_tampered:
+                    cv2.putText(
+                        display_frame,
+                        f"CAMERA OBSTRUCTED: {tamper_type}",
+                        (20, 65),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.75,
+                        (0, 0, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+                display_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
 
             # 3. Update video display
             dashboard.update_video(display_rgb)

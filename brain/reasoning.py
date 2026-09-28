@@ -114,6 +114,63 @@ class ReasoningEngine:
         ).start()
         return True
 
+    def generate_weapon_warning(self, track_id: int, weapon_type: str = "WEAPON"):
+        """Generate an immediate, stern warning ordering an armed person to drop their weapon."""
+        with self._lock:
+            if self._busy:
+                return False
+            self._busy = True
+
+        threading.Thread(
+            target=self._weapon_warning_worker,
+            args=(track_id, weapon_type),
+            daemon=True,
+        ).start()
+        return True
+
+    def _weapon_warning_worker(self, track_id: int, weapon_type: str):
+        """Worker thread for authoritative weapon deterrence."""
+        try:
+            situation = self.context.get_situation_summary()
+            messages = [{"role": "system", "content": self._system_prompt}]
+
+            for entry in self.context.conversation_history[-4:]:
+                role = "user" if entry["role"] == "human" else "assistant"
+                messages.append({"role": role, "content": entry["text"]})
+
+            weapon_prompt = (
+                f"{situation}\n\n"
+                f"[EVENT: CRITICAL THREAT! Person ID:{track_id} is visibly brandishing a {weapon_type}.]\n"
+                f"Deliver a cold, stern, uncompromising direct order to put the {weapon_type} down and step back immediately. "
+                f"Do NOT make jokes. 1 to 2 sharp sentences max. Speak in ULTRON's commanding voice."
+            )
+            messages.append({"role": "user", "content": weapon_prompt})
+
+            print(f"[ULTRON Brain] Generating weapon warning for Person ID:{track_id} ({weapon_type})...")
+            reply, latency_ms = self.client.chat(messages)
+
+            if reply:
+                print(f"[ULTRON Brain] Weapon Warning ({latency_ms:.0f}ms): \"{reply}\"")
+                self.context.add_conversation("ultron", reply)
+                self.event_bus.publish(EventTypes.RESPONSE_GENERATED, {
+                    "text": reply,
+                    "latency_ms": latency_ms,
+                    "timestamp": time.time(),
+                    "autonomous": True,
+                    "weapon_warning": True,
+                })
+                if self.on_reply is not None:
+                    try:
+                        self.on_reply(reply)
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            print(f"[ULTRON Brain] Error generating weapon warning: {e}")
+        finally:
+            with self._lock:
+                self._busy = False
+
     def _greeting_worker(self, track_id: int):
         """Worker thread for autonomous greetings."""
         try:

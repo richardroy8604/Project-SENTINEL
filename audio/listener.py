@@ -21,6 +21,7 @@ from core.event_bus import EventBus, EventTypes
 from audio.capture import AudioCapture
 from audio.vad import SileroVAD
 from audio.stt import SpeechToText
+from security.whisper_classifier import WhisperClassifier
 
 
 class AudioListener:
@@ -44,6 +45,7 @@ class AudioListener:
 
         self.vad = SileroVAD()
         self.stt = SpeechToText()
+        self.whisper_classifier = WhisperClassifier(event_bus=self.event_bus)
         self.capture = AudioCapture(
             on_frame=self._on_audio_frame,
             on_level=self.on_level,
@@ -213,6 +215,14 @@ class AudioListener:
             if len(audio_data) == 0:
                 break  # Sentinel stop
 
+            # Acoustic feature classification (whisper vs normal speech)
+            is_whisper = False
+            whisper_conf = 0.0
+            if getattr(config, "WHISPER_DETECTION_ENABLED", True):
+                is_whisper, whisper_conf, _ = self.whisper_classifier.analyze_utterance(
+                    audio_data, sample_rate=config.AUDIO_SAMPLE_RATE
+                )
+
             # Amplitude normalization
             peak = float(np.max(np.abs(audio_data)))
             if 0.001 < peak < 0.3:
@@ -223,10 +233,12 @@ class AudioListener:
             text = text.strip()
 
             if text:
-                print(f"[ULTRON STT] Valid English: \"{text}\" ({latency_ms:.0f}ms)")
+                whisper_log = f" [WHISPER conf:{whisper_conf:.0%}]" if is_whisper else ""
+                print(f"[ULTRON STT] Valid English: \"{text}\"{whisper_log} ({latency_ms:.0f}ms)")
                 self.event_bus.publish(EventTypes.SPEECH_RECOGNIZED, {
                     "text": text,
-                    "is_whisper": False,
+                    "is_whisper": is_whisper,
+                    "whisper_confidence": whisper_conf,
                     "latency_ms": latency_ms,
                     "timestamp": time.time(),
                 })

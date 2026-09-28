@@ -44,7 +44,9 @@ class StateMachine:
         self._bus.subscribe(EventTypes.PERSON_LEFT, self._on_person_left)
         self._bus.subscribe(EventTypes.LOITERING_DETECTED, self._on_loitering)
         self._bus.subscribe(EventTypes.CAMERA_OBSTRUCTED, self._on_camera_obstructed)
+        self._bus.subscribe(EventTypes.TAMPER_CLEARED, self._on_tamper_cleared)
         self._bus.subscribe(EventTypes.WHISPER_DETECTED, self._on_whisper)
+        self._bus.subscribe(EventTypes.WEAPON_DETECTED, self._on_weapon_detected)
 
     @property
     def state(self) -> str:
@@ -143,10 +145,26 @@ class StateMachine:
             )
         self._evaluate_state()
 
+    def _on_tamper_cleared(self, event: Event):
+        """Camera obstruction cleared."""
+        with self._lock:
+            self._active_anomalies.pop("camera_tamper", None)
+        self._evaluate_state()
+
     def _on_whisper(self, event: Event):
         """Whispered speech detected."""
         with self._lock:
             self._active_anomalies["whisper"] = "Whispered speech detected"
+        self._evaluate_state()
+
+    def _on_weapon_detected(self, event: Event):
+        """Weapon or dangerous tool detected."""
+        track_id = event.data.get("track_id", -1)
+        weapon = event.data.get("weapon", "WEAPON")
+        with self._lock:
+            self._active_anomalies[f"weapon_{track_id}"] = (
+                f"Person ID:{track_id} holding {weapon}"
+            )
         self._evaluate_state()
 
     def clear_anomaly(self, anomaly_id: str):

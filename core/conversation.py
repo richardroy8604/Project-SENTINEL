@@ -58,6 +58,7 @@ class ConversationController:
         self._last_ultron_speech_time: float = 0.0
         self._last_speech_detected_time: float = 0.0
         self._last_user_speech_time: float = 0.0
+        self._last_weapon_warning_time: float = 0.0
         self._is_speaking: bool = False
 
         # Subscriptions
@@ -67,6 +68,7 @@ class ConversationController:
         self.event_bus.subscribe(EventTypes.SPEECH_RECOGNIZED, self._on_speech_recognized)
         self.event_bus.subscribe(EventTypes.PERSON_ENTERED, self._on_person_entered)
         self.event_bus.subscribe(EventTypes.PERSON_LEFT, self._on_person_left)
+        self.event_bus.subscribe(EventTypes.WEAPON_DETECTED, self._on_weapon_detected)
 
     def start(self):
         """Start the autonomous conversation monitor loop."""
@@ -129,6 +131,21 @@ class ConversationController:
         with self._lock:
             # Clean up persuasion timer for person who left
             self._last_persuasion_time_by_id.pop(track_id, None)
+
+    def _on_weapon_detected(self, event: Event):
+        track_id = event.data.get("track_id", -1)
+        weapon = event.data.get("weapon", "WEAPON")
+        now = time.time()
+        with self._lock:
+            if self._is_speaking or (now - self._last_weapon_warning_time) < 20.0:
+                return
+            if self.brain.is_busy:
+                return
+            self._last_weapon_warning_time = now
+            self._last_ultron_speech_time = now
+
+        print(f"[ULTRON Conversation] Triggering weapon deterrence for Person ID:{track_id} ({weapon})")
+        self.brain.generate_weapon_warning(track_id, weapon)
 
     # ── Half-Duplex State Checks ────────────────────────────────────
 

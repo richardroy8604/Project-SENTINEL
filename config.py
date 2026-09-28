@@ -175,3 +175,36 @@ GREETING_COOLDOWN_S = 60.0         # Cooldown before re-greeting the same track 
 PERSON_LOST_GRACE_S = 1.5          # Grace period (seconds) before considering a lost track departed
 PERSUASION_ENABLED = True          # Prompt silent visitors to leave every minute
 PERSUASION_INTERVAL_S = 60.0       # Re-engage every 60s with escalating departure persuasion
+
+# =============================================================================
+# BEHAVIOR ANALYTICS & THREAT DETECTION (Stage 8)
+# =============================================================================
+# Weapon & Tool Detection
+VISION_DETECT_WEAPONS = True       # Detect weapons and dangerous tools via YOLO
+WEAPON_CONFIDENCE = 0.35           # Minimum confidence for weapon/threat detection
+WEAPON_CLASSES = {
+    43: "KNIFE",
+    76: "SCISSORS/TOOL",
+    34: "BLUNT WEAPON",
+}
+OBJECT_CLASSES = {
+    67: "PHONE",
+}
+
+# Loitering Detection (Stationary presence analytics)
+LOITERING_DETECTION_ENABLED = True
+LOITERING_THRESHOLD_S = 90.0       # Seconds of stationary presence before SUSPICIOUS state
+LOITERING_RADIUS_RATIO = 0.20      # Maximum centroid drift ratio to qualify as stationary
+
+# Camera Tampering / Obstruction Detection
+TAMPER_DETECTION_ENABLED = True
+TAMPER_MIN_FRAMES = 15             # Consecutive frames required to confirm tamper (~0.5s at 30 FPS)
+TAMPER_BLACKOUT_BRIGHTNESS = 18.0  # Mean grayscale brightness threshold for lens blackout
+TAMPER_BLACKOUT_STD = 8.0          # Max standard deviation (flatness) for hand over lens
+TAMPER_BLUR_LAPLACIAN_VAR = 22.0   # Max Laplacian variance for severe defocus/lens spray
+
+# Whisper / Quiet Plotting Audio Detection
+WHISPER_DETECTION_ENABLED = True
+WHISPER_MAX_RMS = 0.045            # Max RMS audio energy for whispered speech
+WHISPER_MIN_ZCR = 0.12             # Min Zero-Crossing Rate (high-frequency fricative dominance)
+

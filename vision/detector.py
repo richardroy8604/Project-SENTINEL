@@ -34,6 +34,8 @@ class PersonDetection:
     center: tuple[int, int]    # Center point (cx, cy)
     bbox_area: int             # Bounding box area in pixels
     holding_phone: bool = False  # True if person is holding/recording with a cell phone
+    holding_weapon: bool = False # True if person is holding a weapon or dangerous tool
+    weapon_type: str = ""        # Name of detected weapon (e.g. "KNIFE", "BLUNT WEAPON")
 
 
 @dataclass
@@ -44,6 +46,10 @@ class DetectionResult:
     person_count: int = 0
     inference_ms: float = 0.0  # How long detection took
     frame_annotated: np.ndarray | None = None  # Frame with overlays drawn
+    weapon_detected: bool = False
+    detected_weapons: list[str] = field(default_factory=list)
+    phone_boxes: list = field(default_factory=list)
+    weapon_boxes: list = field(default_factory=list)
 
 
 class PersonDetector:
@@ -106,14 +112,20 @@ class PersonDetector:
 
         start_time = time.perf_counter()
 
-        # Classes to detect: 0=person, 67=cell phone
-        classes_to_detect = [0, 67] if config.VISION_DETECT_PHONES else [0]
+        # Classes to detect: 0=person, 67=cell phone, 43=knife, 76=scissors, 34=baseball bat
+        classes_to_detect = [0]
+        if config.VISION_DETECT_PHONES:
+            classes_to_detect.append(67)
+        if getattr(config, "VISION_DETECT_WEAPONS", True):
+            classes_to_detect.extend(list(config.WEAPON_CLASSES.keys()))
+
+        track_conf = min(self.confidence, getattr(config, "WEAPON_CONFIDENCE", 0.35))
 
         # Run YOLO tracking (detection + ByteTrack in one call)
         results = self._model.track(
             source=frame,
             classes=classes_to_detect,
-            conf=self.confidence,
+            conf=track_conf,
             device=self.device,
             persist=True,
             tracker=TRACKER_CONFIG,
@@ -122,9 +134,10 @@ class PersonDetector:
 
         inference_ms = (time.perf_counter() - start_time) * 1000
 
-        # Parse results: separate persons and phones
+        # Parse results: separate persons, phones, and weapons
         raw_persons = []
         phone_boxes = []
+        weapon_boxes = []
         result_obj = results[0] if results else None
 
         if result_obj and result_obj.boxes is not None and len(result_obj.boxes) > 0:
@@ -136,16 +149,22 @@ class PersonDetector:
                 conf = float(boxes.conf[i].cpu().numpy())
 
                 if cls_id == 67:  # Cell phone
-                    phone_boxes.append((x1, y1, x2, y2, conf))
+                    if conf >= 0.35:
+                        phone_boxes.append((x1, y1, x2, y2, conf))
+                elif cls_id in config.WEAPON_CLASSES:
+                    if conf >= getattr(config, "WEAPON_CONFIDENCE", 0.35):
+                        weapon_name = config.WEAPON_CLASSES[cls_id]
+                        weapon_boxes.append((x1, y1, x2, y2, conf, weapon_name))
                 elif cls_id == 0:  # Person
-                    track_id = -1
-                    if boxes.id is not None:
-                        try:
-                            track_id = int(boxes.id[i].cpu().numpy())
-                        except Exception:
-                            pass
-                    if track_id < 0:
-                        track_id = 1 + i  # Fallback valid track ID if tracker is initializing
+                    if conf >= self.confidence:
+                        track_id = -1
+                        if boxes.id is not None:
+                            try:
+                                track_id = int(boxes.id[i].cpu().numpy())
+                            except Exception:
+                                pass
+                        if track_id < 0:
+                            track_id = 1 + i  # Fallback valid track ID if tracker is initializing
 
                     cx = (x1 + x2) // 2
                     cy = (y1 + y2) // 2
@@ -159,17 +178,29 @@ class PersonDetector:
                         "bbox_area": area,
                     })
 
-        # Match phones to persons (phone center located inside or near person bbox)
+        # Match phones and weapons to persons
         persons = []
         for p in raw_persons:
             px1, py1, px2, py2 = p["bbox"]
             holding_phone = False
+            holding_weapon = False
+            weapon_type = ""
+
+            # Check phone association (upper 85% of person area)
             for phx1, phy1, phx2, phy2, _ in phone_boxes:
                 ph_cx = (phx1 + phx2) // 2
                 ph_cy = (phy1 + phy2) // 2
-                # If phone is in person's upper 80% bounding area
-                if (px1 - 20 <= ph_cx <= px2 + 20) and (py1 <= ph_cy <= py1 + int((py2 - py1) * 0.85)):
+                if (px1 - 25 <= ph_cx <= px2 + 25) and (py1 <= ph_cy <= py1 + int((py2 - py1) * 0.85)):
                     holding_phone = True
+                    break
+
+            # Check weapon association (upper / hand / torso region)
+            for wx1, wy1, wx2, wy2, _, wname in weapon_boxes:
+                wcx = (wx1 + wx2) // 2
+                wcy = (wy1 + wy2) // 2
+                if (px1 - 35 <= wcx <= px2 + 35) and (py1 <= wcy <= py2 + 30):
+                    holding_weapon = True
+                    weapon_type = wname
                     break
 
             persons.append(PersonDetection(
@@ -179,64 +210,81 @@ class PersonDetector:
                 center=p["center"],
                 bbox_area=p["bbox_area"],
                 holding_phone=holding_phone,
+                holding_weapon=holding_weapon,
+                weapon_type=weapon_type,
             ))
 
         # Draw overlays if requested
         frame_annotated = None
         if draw:
-            frame_annotated = self._draw_overlays(frame.copy(), persons, phone_boxes)
+            frame_annotated = self.draw_overlays(frame.copy(), persons, phone_boxes, weapon_boxes)
+
+        detected_weapons = [w[5] for w in weapon_boxes]
 
         return DetectionResult(
             persons=persons,
             person_count=len(persons),
             inference_ms=inference_ms,
             frame_annotated=frame_annotated,
+            weapon_detected=len(weapon_boxes) > 0,
+            detected_weapons=detected_weapons,
+            phone_boxes=phone_boxes,
+            weapon_boxes=weapon_boxes,
         )
 
-    def _draw_overlays(
+    def draw_overlays(
         self,
         frame: np.ndarray,
         persons: list[PersonDetection],
         phone_boxes: list | None = None,
+        weapon_boxes: list | None = None,
+        loitering_ids: list[int] | None = None,
     ) -> np.ndarray:
-        """Draw detection boxes, IDs, phone badges, and confidence on the frame."""
+        """Draw detection boxes, IDs, phone badges, weapons, and tactical threat brackets."""
+        loitering_set = set(loitering_ids or [])
 
         for person in persons:
             x1, y1, x2, y2 = person.bbox
             track_id = person.track_id
             conf = person.confidence
             holding_phone = person.holding_phone
+            holding_weapon = person.holding_weapon
+            weapon_type = person.weapon_type
+            is_loitering = track_id in loitering_set
 
-            # Color: Cyan if holding phone/recording, green for tracked, yellow for untracked
-            if holding_phone:
-                color = (255, 215, 0)   # Cyan / Gold in BGR
+            # Color hierarchy: Red for armed threats, Electric Blue for phones, Amber for loitering, Green for normal
+            if holding_weapon:
+                color = (0, 0, 255)     # Crimson Red (BGR)
+                label = f"ID:{track_id} [ARMED: {weapon_type}] {conf:.0%}"
+            elif is_loitering:
+                color = (0, 165, 255)   # Amber / Orange (BGR)
+                label = f"ID:{track_id} [LOITERING] {conf:.0%}"
+            elif holding_phone:
+                color = (255, 140, 0)   # Electric Blue (BGR)
                 label = f"ID:{track_id} [REC PHONE] {conf:.0%}"
             elif track_id >= 0:
-                color = (0, 255, 100)   # Green (BGR)
+                color = (0, 255, 100)   # Tactical Green (BGR)
                 label = f"ID:{track_id} {conf:.0%}"
             else:
                 color = (0, 255, 255)   # Yellow
                 label = f"PERSON {conf:.0%}"
 
-            # Bounding box — slightly thick for visibility
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            # Bounding box
+            thickness = 3 if holding_weapon else 2
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
-            # Corner accents (tactical look)
-            corner_len = 15
-            # Top-left
+            # Tactical corner accents
+            corner_len = 16
             cv2.line(frame, (x1, y1), (x1 + corner_len, y1), color, 3)
             cv2.line(frame, (x1, y1), (x1, y1 + corner_len), color, 3)
-            # Top-right
             cv2.line(frame, (x2, y1), (x2 - corner_len, y1), color, 3)
             cv2.line(frame, (x2, y1), (x2, y1 + corner_len), color, 3)
-            # Bottom-left
             cv2.line(frame, (x1, y2), (x1 + corner_len, y2), color, 3)
             cv2.line(frame, (x1, y2), (x1, y2 - corner_len), color, 3)
-            # Bottom-right
             cv2.line(frame, (x2, y2), (x2 - corner_len, y2), color, 3)
             cv2.line(frame, (x2, y2), (x2, y2 - corner_len), color, 3)
 
-            # Label background
+            # Label badge
             (label_w, label_h), baseline = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1
             )
@@ -248,14 +296,15 @@ class PersonDetector:
                 -1,
             )
 
-            # Label text (black on colored background)
+            # Label text (white on red for weapons, black on other colors)
+            text_color = (255, 255, 255) if holding_weapon else (0, 0, 0)
             cv2.putText(
                 frame,
                 label,
                 (x1 + 3, y1 - 5),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
-                (0, 0, 0),
+                text_color,
                 1,
                 cv2.LINE_AA,
             )
@@ -263,20 +312,64 @@ class PersonDetector:
             # Center dot
             cv2.circle(frame, person.center, 4, color, -1)
 
-        # Draw detected phone boxes
+        # ── 1. Draw Normal Objects (Phones) in Electric Blue Box ──────
         if phone_boxes:
+            blue_color = (255, 140, 0)  # Electric Blue (BGR)
             for phx1, phy1, phx2, phy2, phconf in phone_boxes:
-                cv2.rectangle(frame, (phx1, phy1), (phx2, phy2), (255, 215, 0), 2)
+                cv2.rectangle(frame, (phx1, phy1), (phx2, phy2), blue_color, 2)
+                ph_label = f"PHONE {phconf:.0%}"
+                (pw, ph), _ = cv2.getTextSize(ph_label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+                cv2.rectangle(frame, (phx1, max(0, phy1 - ph - 6)), (phx1 + pw + 4, phy1), blue_color, -1)
                 cv2.putText(
                     frame,
-                    f"PHONE {phconf:.0%}",
-                    (phx1, max(15, phy1 - 5)),
+                    ph_label,
+                    (phx1 + 2, max(ph, phy1 - 4)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.45,
-                    (255, 215, 0),
+                    (0, 0, 0),
                     1,
                     cv2.LINE_AA,
                 )
+
+        # ── 2. Draw Weapons / Sharp / Blunt Tools in Crimson Red Box ──
+        if weapon_boxes:
+            red_color = (0, 0, 255)  # Crimson Red (BGR)
+            for wx1, wy1, wx2, wy2, wconf, wname in weapon_boxes:
+                cv2.rectangle(frame, (wx1, wy1), (wx2, wy2), red_color, 3)
+                # Red corner accents for high threat
+                w_corner = 12
+                cv2.line(frame, (wx1, wy1), (wx1 + w_corner, wy1), red_color, 4)
+                cv2.line(frame, (wx1, wy1), (wx1, wy1 + w_corner), red_color, 4)
+                cv2.line(frame, (wx2, wy2), (wx2 - w_corner, wy2), red_color, 4)
+                cv2.line(frame, (wx2, wy2), (wx2, wy2 - w_corner), red_color, 4)
+
+                w_label = f"THREAT: {wname} {wconf:.0%}"
+                (ww, wh), _ = cv2.getTextSize(w_label, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+                cv2.rectangle(frame, (wx1, max(0, wy1 - wh - 8)), (wx1 + ww + 6, wy1), red_color, -1)
+                cv2.putText(
+                    frame,
+                    w_label,
+                    (wx1 + 3, max(wh, wy1 - 4)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.48,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+        # Threat banner if weapon present
+        if weapon_boxes:
+            banner_text = f"THREAT DETECTED: {weapon_boxes[0][5]}"
+            cv2.putText(
+                frame,
+                banner_text,
+                (20, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (0, 0, 255),
+                2,
+                cv2.LINE_AA,
+            )
 
         # Person count overlay — top-right
         count_text = f"PERSONS: {len(persons)}"
