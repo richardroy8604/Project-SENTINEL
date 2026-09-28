@@ -258,8 +258,8 @@ class ContextManager:
 
             if self._last_speech_text:
                 lines.append(f"Last person speech: \"{self._last_speech_text}\"")
-                whisper_tag = " (WHISPERED)" if self._is_whisper else ""
-                lines.append(f"Speech type: normal{whisper_tag}")
+                if getattr(config, "WHISPER_DETECTION_ENABLED", False) and self._is_whisper:
+                    lines.append("Speech type: normal (WHISPERED)")
                 ago = int(time.time() - self._last_speech_time)
                 ago_str = "just now" if ago < 10 else "a moment ago" if ago < 60 else "a few minutes ago"
                 lines.append(f"Speech timing: {ago_str}")

@@ -649,7 +649,7 @@ class ReasoningEngine:
                 messages.append({"role": role, "content": entry["text"]})
 
             # 4. Inject current live observations and the person's latest utterance
-            whisper_note = " (Spoken in a whisper)" if is_whisper else ""
+            whisper_note = " (Spoken in a whisper)" if (is_whisper and getattr(config, "WHISPER_DETECTION_ENABLED", False)) else ""
             user_content = f"{situation}\n\nPerson said{whisper_note}: \"{user_text}\""
 
             messages.append({"role": "user", "content": user_content})

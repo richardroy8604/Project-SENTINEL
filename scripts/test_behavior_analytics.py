@@ -350,9 +350,14 @@ def test_suspicious_dialogue_dispatch():
     print("  [PASS] Loitering alert dispatched to brain dialogue worker.")
 
     # 4. Trigger whisper detected
-    bus.publish(EventTypes.WHISPER_DETECTED, {"confidence": 0.88})
-    assert any(c[0] == "whisper" and c[1] == 0.88 for c in mock_brain.calls), "Whisper warning not triggered!"
-    print("  [PASS] Whisper detection dispatched to brain dialogue worker.")
+    orig_whisper_cfg = getattr(config, "WHISPER_DETECTION_ENABLED", False)
+    config.WHISPER_DETECTION_ENABLED = True
+    try:
+        bus.publish(EventTypes.WHISPER_DETECTED, {"confidence": 0.88})
+        assert any(c[0] == "whisper" and c[1] == 0.88 for c in mock_brain.calls), "Whisper warning not triggered!"
+        print("  [PASS] Whisper detection dispatched to brain dialogue worker.")
+    finally:
+        config.WHISPER_DETECTION_ENABLED = orig_whisper_cfg
 
     # 5. Trigger state changed to SUSPICIOUS
     controller._last_weapon_warning_time = 0.0

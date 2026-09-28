@@ -7,6 +7,7 @@ Modify values here — never hardcode settings in module files.
 
 import os
 from pathlib import Path
+import time
 
 # =============================================================================
 # PATHS & ENVIRONMENT
@@ -206,7 +207,28 @@ TAMPER_BLACKOUT_STD = 8.0          # Max standard deviation (flatness) for hand 
 TAMPER_BLUR_LAPLACIAN_VAR = 22.0   # Max Laplacian variance for severe defocus/lens spray
 
 # Whisper / Quiet Plotting Audio Detection
-WHISPER_DETECTION_ENABLED = True
+WHISPER_DETECTION_ENABLED = False          # Disabled for natural conversation flow (can be re-enabled later)
 WHISPER_MAX_RMS = 0.045            # Max RMS audio energy for whispered speech
 WHISPER_MIN_ZCR = 0.12             # Min Zero-Crossing Rate (high-frequency fricative dominance)
+
+# =============================================================================
+# REMOTE COMPANION & IOT MQTT DISPATCH (Stage 9)
+# =============================================================================
+DATA_DIR = PROJECT_ROOT / "data"
+SNAPSHOTS_DIR = DATA_DIR / "snapshots"
+SNAPSHOTS_MAX_KEEP = 60            # Maximum local snapshots retained on disk
+SNAPSHOT_DEBOUNCE_S = 1.2          # Minimum seconds between non-critical action snapshots
+
+# Web Companion Server (FastAPI + WebSockets + PWA)
+WEB_SERVER_ENABLED = True
+WEB_SERVER_HOST = "0.0.0.0"        # Listen on all interfaces (accessible via http://<laptop-ip>:8000)
+WEB_SERVER_PORT = 8000
+
+# IoT MQTT Telemetry & Alert Dispatch
+MQTT_ENABLED = True
+MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "broker.hivemq.com")  # Public cloud broker
+MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", 1883))
+MQTT_CLIENT_ID = f"ultron_edge_{int(time.time())}"
+MQTT_TOPIC_PREFIX = "ultron"       # Base topic prefix (e.g. ultron/state, ultron/chat, ultron/snapshot)
+MQTT_KEEPALIVE = 60
 

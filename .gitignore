@@ -23,6 +23,8 @@ models/*
 # Audio/Video Recording Dumps & Logs
 logs/*
 !logs/.gitkeep
+data/snapshots/*
+!data/snapshots/.gitkeep
 *.wav
 *.mp3
 *.mp4

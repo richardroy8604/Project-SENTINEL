@@ -188,6 +188,8 @@ class ConversationController:
         self.brain.generate_loitering_warning(track_id, duration)
 
     def _on_whisper_detected(self, event: Event):
+        if not getattr(config, "WHISPER_DETECTION_ENABLED", False):
+            return
         conf = event.data.get("confidence", 0.0)
         now = time.time()
         with self._lock:

@@ -28,7 +28,13 @@ from audio.listener import AudioListener
 from brain.reasoning import ReasoningEngine
 from voice import TTSEngine, VoicePlayback
 from ui.dashboard import Dashboard
-from security import CameraTamperDetector, LoiteringDetector
+from security import (
+    CameraTamperDetector,
+    LoiteringDetector,
+    SnapshotManager,
+    MQTTDispatcher,
+)
+from web.server import WebServer
 
 
 def main():
@@ -52,6 +58,23 @@ def main():
     print("[ULTRON] Initializing security & behavior analytics...")
     tamper_detector = CameraTamperDetector(event_bus=event_bus)
     loitering_detector = LoiteringDetector(event_bus=event_bus)
+
+    # ── Initialize Remote IoT & Web Companion (Stage 9) ─────────────
+    print("[ULTRON] Initializing forensic snapshot manager...")
+    snapshot_manager = SnapshotManager(event_bus=event_bus)
+
+    print("[ULTRON] Initializing IoT MQTT telemetry dispatcher...")
+    mqtt_dispatcher = MQTTDispatcher(event_bus=event_bus, context=context)
+    mqtt_dispatcher.start()
+
+    print("[ULTRON] Initializing Remote Web Companion & WebSocket Hub...")
+    web_server = WebServer(
+        event_bus=event_bus,
+        context=context,
+        snapshot_manager=snapshot_manager,
+        mqtt_dispatcher=mqtt_dispatcher,
+    )
+    web_server.start()
 
     # ── Initialize Camera ───────────────────────────────────────────
     print("[ULTRON] Initializing camera...")
@@ -169,8 +192,14 @@ def main():
         dashboard.log_event(f"[SECURITY] Camera tamper cleared ({t})")
 
     def on_whisper_detected(event):
-        conf = event.data.get("confidence", 0.0)
-        dashboard.log_event(f"[AUDIO] Whispered speech detected (conf: {conf:.0%})")
+        if getattr(config, "WHISPER_DETECTION_ENABLED", False):
+            conf = event.data.get("confidence", 0.0)
+            dashboard.log_event(f"[AUDIO] Whispered speech detected (conf: {conf:.0%})")
+
+    def on_snapshot_captured(event):
+        trig = event.data.get("trigger", "SNAPSHOT")
+        threat = event.data.get("threat_level", "NOMINAL")
+        dashboard.log_event(f"[FORENSICS] Snapshot captured: {trig} ({threat})")
 
     event_bus.subscribe(EventTypes.STATE_CHANGED, on_state_changed)
     event_bus.subscribe(EventTypes.SPEECH_DETECTED, on_speech_detected)
@@ -183,6 +212,7 @@ def main():
     event_bus.subscribe(EventTypes.CAMERA_OBSTRUCTED, on_camera_obstructed)
     event_bus.subscribe(EventTypes.TAMPER_CLEARED, on_tamper_cleared)
     event_bus.subscribe(EventTypes.WHISPER_DETECTED, on_whisper_detected)
+    event_bus.subscribe(EventTypes.SNAPSHOT_CAPTURED, on_snapshot_captured)
 
     dashboard.log_event("[ULTRON] Core systems online.")
     dashboard.log_event("[ULTRON] Camera active.")
@@ -191,12 +221,17 @@ def main():
         weapon_tag = " + Threat/Weapon Recognition" if getattr(config, "VISION_DETECT_WEAPONS", True) else ""
         dashboard.log_event(f"[ULTRON] Vision: YOLO11s on {config.DETECTION_DEVICE}{phone_tag}{weapon_tag}")
     if audio_listener:
-        dashboard.log_event(f"[ULTRON] Audio: Silero VAD + faster-whisper ({config.STT_MODEL_SIZE}) + Whisper Classifier")
+        whisper_tag = " + Whisper Classifier" if getattr(config, "WHISPER_DETECTION_ENABLED", False) else ""
+        dashboard.log_event(f"[ULTRON] Audio: Silero VAD + faster-whisper ({config.STT_MODEL_SIZE}){whisper_tag}")
     dashboard.log_event(f"[ULTRON] Brain: Persona active ({config.LLM_MODEL})")
     if getattr(config, "LOITERING_DETECTION_ENABLED", True):
         dashboard.log_event(f"[ULTRON] Behavior: Loitering engine active ({int(config.LOITERING_THRESHOLD_S)}s limit)")
     if getattr(config, "TAMPER_DETECTION_ENABLED", True):
         dashboard.log_event("[ULTRON] Security: Camera tamper & obstruction monitor active")
+    if getattr(config, "MQTT_ENABLED", True):
+        dashboard.log_event(f"[ULTRON] IoT: MQTT Gateway ({config.MQTT_BROKER_HOST})")
+    if getattr(config, "WEB_SERVER_ENABLED", True):
+        dashboard.log_event(f"[ULTRON] Web: Companion Hub on port {config.WEB_SERVER_PORT}")
     if voice_playback:
         if config.TTS_PROVIDER == "fish":
             v_name = f"Fish Audio ({config.FISH_AUDIO_VOICE_ID[:8]}...)"
@@ -207,6 +242,7 @@ def main():
         dashboard.log_event(f"[ULTRON] Voice: {v_name} ({config.TTS_PROVIDER.upper()})")
     dashboard.log_event("[ULTRON] Flow: Autonomous greeting & re-engagement active")
     dashboard.log_event("[ULTRON] Monitoring...")
+
 
     # ── Main Loop ───────────────────────────────────────────────────
     print("[ULTRON] System online. Close the window to exit.")
@@ -311,6 +347,14 @@ def main():
                 # Sync person count to state machine using genuine physical person count
                 state_machine.set_person_count(len(current_ids))
 
+                # Update forensic snapshot manager with live frame and detections
+                if snapshot_manager:
+                    snapshot_manager.update_frame(
+                        frame=frame_bgr,
+                        detections=result,
+                        security_state=context._security_state,
+                    )
+
                 # Update dashboard detection stats
                 dashboard.update_detection_info(
                     person_count=result.person_count,
@@ -343,6 +387,13 @@ def main():
 
             else:
                 display_frame = frame_bgr.copy()
+                if snapshot_manager:
+                    snapshot_manager.update_frame(
+                        frame=frame_bgr,
+                        detections=None,
+                        security_state=context._security_state,
+                    )
+
                 if is_tampered:
                     cv2.putText(
                         display_frame,
@@ -369,6 +420,10 @@ def main():
 
     finally:
         print("[ULTRON] Shutting down...")
+        if web_server:
+            web_server.stop()
+        if mqtt_dispatcher:
+            mqtt_dispatcher.stop()
         if conversation:
             conversation.stop()
         if voice_playback:
@@ -384,3 +439,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -61,6 +61,9 @@ class EventTypes:
     SPEAKING_FINISHED = "TTS_FINISHED"
     AUDIO_PLAYBACK_LEVEL = "AUDIO_PLAYBACK_LEVEL"
 
+    # IoT & Remote Dashboard events (Stage 9)
+    SNAPSHOT_CAPTURED = "SNAPSHOT_CAPTURED"
+
 
 class EventBus:
     """

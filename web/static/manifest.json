@@ -1,0 +1,17 @@
+{
+  "name": "ULTRON Security Companion",
+  "short_name": "ULTRON",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#00e5ff",
+  "description": "Tactical AI Security & Incident Monitor",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

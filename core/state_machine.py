@@ -153,6 +153,8 @@ class StateMachine:
 
     def _on_whisper(self, event: Event):
         """Whispered speech detected."""
+        if not getattr(config, "WHISPER_DETECTION_ENABLED", False):
+            return
         with self._lock:
             self._active_anomalies["whisper"] = "Whispered speech detected"
         self._evaluate_state()
